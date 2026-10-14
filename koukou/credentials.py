@@ -74,3 +74,34 @@ def clear() -> None:
         kr.delete_password(SERVICE, "phone")
     except Exception as e:  # noqa: BLE001
         log.debug("keyring clear failed: %s", type(e).__name__)
+
+
+# ---- 其他秘密（例如 AI 金鑰）：只存鑰匙圈，沒有鑰匙圈時只留在記憶體 ----
+
+_secrets: dict[str, str] = {}
+
+
+def get_secret(name: str) -> str:
+    if name in _secrets:
+        return _secrets[name]
+    kr = _keyring()
+    if kr is None:
+        return ""
+    try:
+        return kr.get_password("koukou", name) or ""
+    except Exception as e:  # noqa: BLE001
+        log.debug("keyring get failed: %s", type(e).__name__)
+        return ""
+
+
+def set_secret(name: str, value: str) -> bool:
+    _secrets[name] = value
+    kr = _keyring()
+    if kr is None:
+        return False
+    try:
+        kr.set_password("koukou", name, value)
+        return True
+    except Exception as e:  # noqa: BLE001
+        log.debug("keyring set failed: %s", type(e).__name__)
+        return False

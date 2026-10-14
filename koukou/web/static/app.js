@@ -40,12 +40,18 @@ async function staticApi(path, method) {
   if (route === "api/merchants") return month.merchants.slice(0, Number(p.get("limit") || 8));
   if (route === "api/sync") return { running: false };
   if (route === "api/credentials") return { configured: false };
+  if (route === "api/categories") return ledger.categories;
+  if (route === "api/breakdown") return month.breakdown;
+  if (route === "api/ai") return ledger.ai;
   if (route === "api/invoices") {
     const q = (p.get("q") || "").toLowerCase();
-    if (!q) return month.invoices;
-    return month.invoices.filter((inv) =>
-      [inv.merchant, inv.seller_name, inv.inv_num, ...inv.items.map((it) => it.description)]
-        .some((text) => (text || "").toLowerCase().includes(q)));
+    const cat = p.get("category");
+    return month.invoices.filter((inv) => {
+      if (cat && !inv.items.some((it) => it.amount > 0 && (it.category ?? "未分類") === cat)) return false;
+      if (!q) return true;
+      return [inv.merchant, inv.seller_name, inv.inv_num, ...inv.items.map((it) => it.description)]
+        .some((text) => (text || "").toLowerCase().includes(q));
+    });
   }
   const items = route.match(/^api\/invoices\/([^/]+)\/items$/);
   if (items) {
@@ -59,7 +65,7 @@ async function staticApi(path, method) {
   throw new Error(`線上展示不支援 ${route}`);
 }
 
-const state = { months: [], month: null, query: "", demo: false, configured: false };
+const state = { months: [], month: null, query: "", category: "", demo: false, configured: false, categories: [] };
 
 async function init() {
   const meta = await api("api/meta");
@@ -73,7 +79,8 @@ async function init() {
     $("#live-banner").hidden = !STATIC;
   }
   await refreshAccount();
-  await Promise.all([renderTrend(), render()]);
+  state.categories = await api("api/categories");
+  await Promise.all([renderTrend(), render(), refreshAcai()]);
   $("#stamp").classList.add("press");
   const sync = await api("api/sync");
   if (sync.running) pollSync();
@@ -88,11 +95,15 @@ async function render() {
   $("#prev").disabled = idx <= 0;
   $("#next").disabled = idx === -1 || idx >= state.months.length - 1;
 
-  const [summary, invoices, shops] = await Promise.all([
+  const cat = state.category ? `&category=${encodeURIComponent(state.category)}` : "";
+  const [summary, invoices, shops, cats] = await Promise.all([
     api(`api/summary?month=${month}`),
-    api(`api/invoices?month=${month}&q=${encodeURIComponent(query)}`),
+    api(`api/invoices?month=${month}&q=${encodeURIComponent(query)}${cat}`),
     api(`api/merchants?month=${month}&limit=6`),
+    api(`api/breakdown?month=${month}`),
   ]);
+  $("#filter").hidden = !state.category;
+  $("#filter-name").textContent = state.category;
 
   $("#total").textContent = money(summary.amount);
   $("#total-sub").textContent = summary.count
@@ -102,6 +113,7 @@ async function render() {
 
   renderInvoices(invoices);
   renderShops(shops);
+  renderCategories(cats);
   document.querySelectorAll(".trend-col").forEach((col) =>
     col.setAttribute("aria-pressed", String(col.dataset.month === month)),
   );
@@ -126,6 +138,7 @@ function renderInvoices(invoices) {
   const empty = $("#empty");
   empty.hidden = invoices.length > 0;
   if (state.query) empty.textContent = `這個月沒有符合「${state.query}」的發票。`;
+  else if (state.category) empty.textContent = `這個月沒有「${state.category}」的發票。`;
   else empty.textContent = state.demo
     ? "這個月沒有發票。"
     : "這個月還沒有發票。按右上角「摳回最新發票」把它們抓回來。";
@@ -140,7 +153,11 @@ async function toggleItems(btn, box, inv) {
   for (const it of items) {
     const li = document.createElement("li");
     const name = document.createElement("span");
-    name.textContent = it.description;
+    name.className = "desc";
+    const label = document.createElement("span");
+    label.textContent = it.description;
+    name.append(label);
+    if (it.amount > 0) name.append(categoryTag(it));
     const qty = document.createElement("span");
     qty.className = "qty";
     qty.textContent = it.quantity && it.quantity !== 1 ? `×${it.quantity}` : "";
@@ -155,6 +172,145 @@ async function toggleItems(btn, box, inv) {
   meta.textContent = `${inv.inv_num}　${inv.inv_time ?? ""}　${inv.seller_name ?? ""}`;
   box.append(meta);
 }
+
+// ---- 分類 ----
+function categoryTag(it) {
+  const tag = document.createElement("button");
+  tag.type = "button";
+  tag.className = "tag";
+  const paint = () => {
+    tag.textContent = it.category ?? "未分類";
+    tag.classList.toggle("mine", it.category_source === "user");
+    tag.classList.toggle("unsure", it.category_source === "llm" && it.confidence < 0.6);
+    const who = { user: "你改的", llm: `阿財猜的（把握 ${Math.round((it.confidence ?? 0) * 100)}%）`,
+                  rule: "規則判斷", demo: "展示資料" }[it.category_source] ?? "還沒分類";
+    tag.title = `${who}，點一下修改`;
+    tag.setAttribute("aria-label", `分類：${tag.textContent}，${who}，點一下修改`);
+  };
+  paint();
+  tag.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (state.demo) {
+      $("#sync-status").textContent = "展示資料不能改分類。在自己的帳本裡，改一次之後同名品項都會跟著改，阿財也會記住你的習慣。";
+      return;
+    }
+    const select = document.createElement("select");
+    select.className = "tag-select";
+    select.setAttribute("aria-label", `把「${it.description}」改成`);
+    for (const c of state.categories) {
+      const opt = new Option(c.id, c.id, false, c.id === it.category);
+      opt.title = c.hint;
+      select.append(opt);
+    }
+    tag.replaceWith(select);
+    select.focus();
+    const done = async (save) => {
+      if (save && select.value !== it.category) {
+        try {
+          const r = await api("api/items/category", { method: "POST",
+            body: { description: it.description, category: select.value } });
+          it.category = select.value;
+          it.category_source = "user";
+          $("#sync-status").textContent = `已把「${it.description}」改成${select.value}，共 ${r.applied_to} 筆一起套用。`;
+          render();
+          refreshAcai();
+        } catch (err) {
+          $("#sync-status").textContent = err.message;
+        }
+      }
+      paint();
+      if (select.isConnected) select.replaceWith(tag);
+    };
+    select.addEventListener("change", () => done(true));
+    select.addEventListener("blur", () => done(false));
+    select.addEventListener("keydown", (ev) => { if (ev.key === "Escape") done(false); });
+  });
+  return tag;
+}
+
+function renderCategories(cats) {
+  const list = $("#cats");
+  list.replaceChildren();
+  const max = Math.max(1, ...cats.map((c) => c.amount));
+  for (const c of cats) {
+    const li = document.createElement("li");
+    const btn = document.createElement("button");
+    btn.className = "shop";
+    btn.setAttribute("aria-pressed", String(state.category === c.category));
+    btn.innerHTML = `<span class="shop-name"></span><span class="shop-amt"><small></small><span></span></span>
+      <span class="shop-track"><span class="shop-fill"></span></span>`;
+    btn.querySelector(".shop-name").textContent = c.category;
+    btn.querySelector(".shop-amt small").textContent = `${Math.round(c.share * 100)}%`;
+    btn.querySelector(".shop-amt span").textContent = money(c.amount);
+    btn.querySelector(".shop-fill").style.width = `${(c.amount / max) * 100}%`;
+    btn.title = `只看有「${c.category}」的發票`;
+    btn.addEventListener("click", () => {
+      state.category = state.category === c.category ? "" : c.category;
+      render();
+    });
+    li.append(btn);
+    list.append(li);
+  }
+  if (!cats.length) list.innerHTML = '<li class="empty">還沒有資料</li>';
+}
+
+async function refreshAcai() {
+  const ai = await api("api/ai");
+  const s = ai.stats ?? {};
+  const done = (s.rule ?? 0) + (s.llm ?? 0) + (s.user ?? 0) + (s.demo ?? 0);
+  const text = $("#acai-text");
+  const meta = $("#acai-meta");
+  const btn = $("#acai-run");
+  btn.hidden = true;
+  if (ai.running) {
+    text.textContent = `正在分類：${ai.step}`;
+    meta.textContent = "";
+    setTimeout(refreshAcai, 1000);
+    return;
+  }
+  if (state.demo) {
+    text.textContent = `這份展示帳本的 ${done} 種品項都分好類了。點品項旁邊的分類標籤，可以看到它是怎麼分的。`;
+    meta.textContent = "在你自己的帳本裡，我用 Claude 或本機模型分類；你改過的分類我會記住。";
+    return;
+  }
+  if (ai.error) {
+    text.textContent = `分類沒完成：${ai.error}`;
+  } else if (s.pending > 0) {
+    text.textContent = ai.configured
+      ? `還有 ${s.pending} 種品項沒分類，要我幫忙嗎？`
+      : `還有 ${s.pending} 種品項沒分類。設定好 AI 之後我就能幫你分。`;
+    btn.hidden = !ai.configured;
+  } else if (done) {
+    text.textContent = `${done} 種品項都分好了。分錯的話，點品項旁的標籤改一下，我會記住。`;
+  } else {
+    text.textContent = "摳回發票之後，我會幫每個品項分類。";
+  }
+  const parts = [];
+  if (s.rule) parts.push(`規則 ${s.rule}`);
+  if (s.llm) parts.push(`AI ${s.llm}${s.low_confidence ? `（${s.low_confidence} 個沒把握）` : ""}`);
+  if (s.user) parts.push(`你改過 ${s.user}`);
+  meta.textContent = ai.configured ? `${parts.join("、")}${parts.length ? "。" : ""}模型：${ai.model}` : ai.hint;
+}
+
+$("#acai-run").addEventListener("click", async () => {
+  try {
+    await api("api/ai/categorize", { method: "POST" });
+  } catch (e) {
+    $("#acai-text").textContent = e.message;
+    return;
+  }
+  await refreshAcai();
+  const wait = async () => {
+    const ai = await api("api/ai");
+    if (ai.running) return setTimeout(wait, 1000);
+    render();
+  };
+  wait();
+});
+$("#filter-clear").addEventListener("click", () => {
+  state.category = "";
+  render();
+});
 
 function renderShops(shops) {
   const list = $("#shops");
@@ -290,6 +446,7 @@ async function pollSync() {
     state.months = meta.months;
     await renderTrend();
     await render();
+    refreshAcai();
     $("#stamp").classList.remove("press");
     void $("#stamp").offsetWidth;
     $("#stamp").classList.add("press");

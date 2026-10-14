@@ -95,6 +95,46 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ai(args: argparse.Namespace) -> int:
+    from .ai import llm
+
+    config.load_dotenv()
+    if args.ai_command == "setup":
+        key = getpass.getpass("Claude API 金鑰（sk-ant-…，輸入時不會顯示）：").strip()
+        if not key.startswith("sk-"):
+            print("看起來不像 Anthropic 的 API 金鑰。到 https://console.anthropic.com 建立一把。", file=sys.stderr)
+            return 1
+        saved = credentials.set_secret(llm.ANTHROPIC_KEY, key)
+        print("已存進系統鑰匙圈。" if saved else "這台電腦沒有可用的鑰匙圈；請改用環境變數 ANTHROPIC_API_KEY。")
+        return 0 if saved else 1
+
+    info = llm.from_environment()
+    if args.ai_command == "eval":
+        from .ai.evaluate import evaluate, format_report, save_report
+
+        if not info.configured and not args.rules_only:
+            print(f"還沒設定模型：{info.hint}。先只跑規則層。\n")
+        rep = evaluate(None if args.rules_only else info.provider)
+        print(format_report(rep))
+        if args.report:
+            save_report(rep, args.report)
+            print(f"\n報告已存到 {args.report}")
+        return 0
+
+    # categorize
+    from .ai.categorizer import categorize_store
+
+    store = Store(args.db)
+    if not info.configured:
+        print(f"還沒設定模型：{info.hint}。這次只用規則分類。")
+    stats = categorize_store(store, info.provider, progress=lambda m: print(f"  {m}"))
+    print(f"完成：規則 {stats.rule} 個、阿財（{info.model or '無'}）{stats.llm} 個、未完成 {stats.failed} 個。")
+    if stats.usage.calls:
+        u = stats.usage
+        print(f"用量：{u.calls} 次呼叫，輸入 {u.input_tokens:,} / 輸出 {u.output_tokens:,} tokens")
+    return 0
+
+
 def cmd_build_static(args: argparse.Namespace) -> int:
     from .static_site import build
 
@@ -138,6 +178,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--refresh-details", action="store_true", help="已抓過的品項也重抓")
     p.add_argument("--delay", type=float, default=0.3, help="每次查詢間隔秒數")
     p.set_defaults(func=cmd_fetch)
+
+    p = sub.add_parser("ai", help="阿財：AI 品項分類")
+    ai_sub = p.add_subparsers(dest="ai_command", required=True)
+    a = ai_sub.add_parser("setup", help="設定 Claude API 金鑰（存進鑰匙圈）")
+    a = ai_sub.add_parser("categorize", help="把還沒分類的品項分類")
+    a.add_argument("--db", type=Path, default=config.default_db())
+    a = ai_sub.add_parser("eval", help="用人工標註的測試集評估分類準確率")
+    a.add_argument("--rules-only", action="store_true", help="只量規則層，不呼叫模型")
+    a.add_argument("--report", type=Path, help="把結果存成 JSON")
+    p.set_defaults(func=cmd_ai)
 
     p = sub.add_parser("build-static", help="輸出可放上 GitHub Pages 的線上展示")
     p.add_argument("--out", type=Path, default=Path("site"))

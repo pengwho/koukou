@@ -13,6 +13,7 @@ from datetime import date
 from pathlib import Path
 
 from . import __version__
+from .ai.categories import CATEGORIES
 from .demo import build_demo_db
 from .web.app import STATIC
 
@@ -23,6 +24,8 @@ def ledger_json(store, demo: bool = True) -> dict:
         "meta": {"version": __version__, "demo": demo, "static": True, "months": months,
                  "default_month": months[-1] if months else None},
         "monthly": store.monthly(),
+        "categories": [{"id": c.id, "hint": c.hint} for c in CATEGORIES],
+        "ai": {"configured": False, "demo": True, "running": False, "stats": store.category_stats()},
         "months": {},
     }
     for m in months:
@@ -32,6 +35,7 @@ def ledger_json(store, demo: bool = True) -> dict:
         data["months"][m] = {
             "summary": {k: v for k, v in store.summary(m).items() if k != "last_sync"},
             "merchants": store.merchants(m, limit=50),
+            "breakdown": store.breakdown(m),
             "invoices": invoices,
         }
     return data

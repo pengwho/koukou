@@ -44,6 +44,10 @@
         </div>
         <p id="total-sub" class="total-sub"></p>
       </div>
+      <p id="filter" class="filter" hidden>
+        只看<strong id="filter-name"></strong>
+        <button id="filter-clear" class="link-btn" aria-label="顯示全部發票">顯示全部</button>
+      </p>
       <label class="search">
         <span class="visually-hidden">搜尋</span>
         <input id="search" type="search" placeholder="搜尋店家、品項或發票號碼" autocomplete="off">
@@ -58,6 +62,11 @@
         <div id="trend" class="trend" role="group" aria-label="每月消費，點一下切換月份"></div>
       </section>
 
+      <section class="panel" aria-labelledby="cats-title">
+        <h2 id="cats-title">花在什麼上</h2>
+        <ol id="cats" class="shops cats"></ol>
+      </section>
+
       <section class="panel" aria-labelledby="shops-title">
         <h2 id="shops-title">錢都花去哪</h2>
         <ol id="shops" class="shops"></ol>
@@ -67,7 +76,9 @@
         <div class="acai-avatar" aria-hidden="true">財</div>
         <div>
           <h2 id="acai-title">阿財</h2>
-          <p>我是你的記帳小幫手。下一版開始，我會幫每個品項分類，也能回答「上個月咖啡花了多少」這種問題。</p>
+          <p id="acai-text">我是你的記帳小幫手，負責把每個品項分好類。</p>
+          <p id="acai-meta" class="acai-meta"></p>
+          <button id="acai-run" class="sync-btn small" hidden>請阿財分類</button>
         </div>
       </section>
     </aside>
