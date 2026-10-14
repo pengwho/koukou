@@ -25,11 +25,11 @@
 | --- | --- |
 | 摳摳＝錢 | 把手機條碼的電子發票（之後還有銀行帳戶）收進**你自己電腦上**的一本帳 |
 | 摳＝挖出來 | 模擬官方 App 的協定把資料抓回來，不用一張一張手動匯出 |
-| 摳＝省 | 讓 AI 助理**阿財**幫你分類、回答問題、找出可以省的地方（開發中） |
+| 摳＝省 | 助理**阿財**用內建的小模型幫每個品項分類，不用設定；沒把握的會問你，越用越準 |
 
 ### 先看看長什麼樣子
 
-直接打開 **[線上展示](https://pengwho.github.io/koukou/)**，裡面是虛構的發票，什麼都不用裝。
+直接打開 **[線上展示](https://pengwho.github.io/koukou/)**，裡面是虛構的發票，什麼都不用裝。按阿財卡片上的「幫我確認」，可以實際體驗它怎麼從你的答案學習。
 
 ### 用你自己的發票
 
@@ -43,6 +43,54 @@ koukou serve
 - 帳密存在系統鑰匙圈（macOS Keychain），不會寫進檔案；頁尾可以隨時「取消連結」
 - 帳本在 `~/.koukou/koukou.sqlite3`；`koukou export` 匯出 CSV；`koukou fetch` 可從命令列同步
 - `koukou demo` 用虛構資料在本機打開
+
+### 阿財怎麼分類
+
+**不用任何設定。** 摳回發票後，阿財會用內建的小模型把每個品項分好類：不用網路、不用 API 金鑰、不用另外裝軟體，三百種品名不到一秒。有沒把握的，它會在畫面上請你確認，你答一題，它就重新學一次，相似的品項跟著改。
+
+<img src="docs/review.webp" width="420" alt="「幫阿財確認」視窗：顯示一個沒把握的品項、阿財的猜測和信心，以及可以點選的分類">
+
+```mermaid
+flowchart LR
+  A[發票品項] --> B{規則<br>只放不會錯的}
+  B -- 命中 --> Z[(分類)]
+  B -- 沒把握 --> C[內建小模型<br>字元 n-gram + 店名<br>Naive Bayes]
+  C -- 有把握 --> Z
+  C -- 信心 < 0.3 --> U[未分類<br>不硬猜]
+  C -- 信心 < 0.75 且有設定 LLM --> D[Claude 或本機 LLM 複查<br>選用]
+  D --> Z
+  Z -- 沒把握的 --> R[幫阿財確認<br>先問影響金額最大的]
+  R -- 你的答案 --> C
+```
+
+- **內建小模型。** 純 Python 的 Naive Bayes：中文用字元片段、英文用整個單字、店名也是特徵（同樣的「月費」在健身房是娛樂）。訓練資料是 862 筆手寫標註的台灣發票品項（`koukou/ai/trainset.txt`），訓練不到 0.1 秒，所以每次分類前都把你的修正加進去重新訓練，不用存模型檔。
+- **主動學習。** 「幫阿財確認」一次問一題，依影響金額排序。答案馬上變成訓練資料（權重 3 倍），相似品名跟著學會；在真實帳本上模擬，答 20 題後待確認清單從 51 個降到 28 個（多解決的 3 個是相似品名跟著學會的）。
+- **不硬猜。** 信心低於 0.3 的標成「未分類」；0.3 到 0.6 的畫面上用虛線標出來，並列進確認清單。
+- **線上展示也會學。** 小模型另外寫了一份 JavaScript 版（`koukou-model.js`），線上展示在瀏覽器裡用同一份訓練資料訓練、吃進你的答案；測試會拿兩邊對 260 次預測逐筆比對，分類必須相同、信心誤差小於 10⁻⁹。
+- **LLM 是選配。** 有 Claude API 金鑰（`koukou ai setup`）或本機模型（`KOUKOU_AI_PROVIDER=openai KOUKOU_AI_MODEL=qwen2.5:7b`）的話，只把小模型沒把握的送去複查；LLM 有把握的答案也會回頭變成小模型的訓練資料。送出去的只有品名和店名，不送金額、日期、發票號碼或載具。
+- **數字對得起來。** 折扣、點數折抵和發票差額依比例攤回同一張發票的其他品項，各分類加總等於當月發票總額。
+
+```bash
+koukou ai categorize   # 命令列分類（網頁上會自動做）
+koukou ai eval         # 用保留測試集量準確率
+koukou ai setup        # 選用：設定 Claude API 金鑰
+```
+
+#### 準確率
+
+| 資料 | 規則 | 內建小模型 | 整體（不用任何金鑰） |
+| --- | --- | --- | ---: |
+| **保留測試集**：126 個人工標註品項，訓練時完全沒看過 | 覆蓋 19.8%，準確 100% | 準確 87.1% | **89.7%** |
+| **作者真實帳本**：289 種品名，人工逐筆判斷 | 39 個，全對 | 250 個：對 196、錯 36、不猜 18 | **81%**（錯 12.5%、未分類 6%） |
+
+真實帳本的數字比測試集低，這是預期中的事，也是這個專案最有價值的一課：
+
+1. 第一版只在自己寫的測試集上量，看起來有 87%；拿真實帳本跑，只有約 66%。真實發票有大量英文品名（IKEA 的 `SWEDISH MEATBALLS`、`UPPSNOFSAD box`）、店內術語（壽司郎的「60元盤子」、「定食副餐」）、商品編號和聯名玩具，這些是手寫測試集沒涵蓋到的。
+2. 依錯誤型態補了**通用**的訓練例子（不是把真實紀錄抄進來）、英文改用單字特徵、加上店名片段（「餐飲」「飲食店」），並讓模型沒把握時不猜：66% → 75% → 81%。
+3. 規則層也是拿真實資料跑才發現「美式雞腿堡」被當成咖啡，修正後同類例子加進測試集當回歸測試。
+4. 修正權重一開始太高（5 倍），導致改一個「750616@三商鮮五丼」，純數字的商品編號都被拉成餐飲；拿掉純數字特徵、降到 3 倍後副作用消失。
+
+真實帳本的 81% 是看過這些錯誤之後改出來的，所以偏樂觀；保留測試集的 89.7% 才是乾淨的數字。真實資料的內容沒有放進這個 repo。
 
 ### 它怎麼運作
 
@@ -72,7 +120,7 @@ flowchart LR
 - [x] 電子發票：表頭、品項、增量同步、CSV 匯出
 - [x] 本機網頁介面與展示模式
 - [x] 線上展示（GitHub Pages）、網頁上直接連結手機條碼、帳密存鑰匙圈
-- [ ] **阿財**：LLM 品項分類（含快取與準確率評估）
+- [x] **阿財**：品項分類（規則＋內建小模型＋選用 LLM、主動學習、評估）
 - [ ] **阿財**：用自然語言問帳本（text-to-SQL，唯讀與白名單防護）
 - [ ] MCP server：讓 Claude 等 AI 直接查你的帳本
 - [ ] 第一家銀行（Playwright）
@@ -90,7 +138,7 @@ flowchart LR
 
 **KouKou** (摳摳, Taiwanese slang for *money*; 摳 also means *to dig out* and *to be thrifty*) is a local-first personal finance hub for Taiwan.
 
-It pulls your e-invoices — every receipt tied to your mobile barcode carrier, down to line items — by speaking the official mobile app's API directly, stores them in a SQLite ledger on your own machine, and shows them in a small local web app. Bank accounts and an AI assistant, **A-Tsâi (阿財, "little fortune")**, are next.
+It pulls your e-invoices — every receipt tied to your mobile barcode carrier, down to line items — by speaking the official mobile app's API directly, stores them in a SQLite ledger on your own machine, and shows them in a small local web app. An assistant, **A-Tsâi (阿財, "little fortune")**, categorizes every line item with zero setup: high-precision rules, then a built-in pure-Python Naive Bayes model (Chinese character n-grams, English word features, store-name features) trained on 862 hand-labeled Taiwanese receipt items. It abstains when unsure, asks you about the uncertain items ranked by spending impact, and retrains instantly on each answer (active learning). An LLM (Claude or any OpenAI-compatible local model) is optional and only reviews low-confidence guesses. Offline accuracy: 89.7% on a held-out 126-item test set; ~81% on the author's real ledger (289 item names, judged by hand), up from ~66% for the first version after error analysis on real data. Bank accounts are next.
 
 **[Try the live demo](https://pengwho.github.io/koukou/)** (generated data, nothing to install), or run it on your own invoices:
 

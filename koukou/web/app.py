@@ -19,6 +19,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .. import __version__, config, credentials
+from ..ai import llm
+from ..ai.categories import CATEGORIES, CATEGORY_IDS, UNCATEGORIZED, normalize
 from ..store import Store
 
 STATIC = Path(__file__).parent / "static"
@@ -33,11 +35,51 @@ class Login(BaseModel):
     remember: bool = True
 
 
-class SyncJob:
-    """一次只跑一個同步；網頁輪詢 /api/sync 取得進度。"""
+class CategoryFix(BaseModel):
+    description: str = Field(min_length=1, max_length=200)
+    category: str
+
+
+class AIJob:
+    """阿財分類工作。同步完成後也會自動跑一次，把新品項分好。"""
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
+        self.state: dict[str, Any] = {"running": False, "step": "", "error": "", "result": None}
+
+    def run(self, db_path: Path, background: bool = True) -> None:
+        with self.lock:
+            if self.state["running"]:
+                raise HTTPException(409, "阿財正在分類中")
+            self.state = {"running": True, "step": "準備中", "error": "", "result": None}
+        if background:
+            threading.Thread(target=self._run, args=(db_path,), daemon=True).start()
+        else:
+            self._run(db_path)
+
+    def _run(self, db_path: Path) -> None:
+        from ..ai.categorizer import categorize_store
+
+        store = Store(db_path)
+        try:
+            info = llm.from_environment()
+            stats = categorize_store(store, info.provider, progress=lambda m: self.state.update(step=m))
+            self.state.update(result={"rule": stats.rule, "local": stats.local, "llm": stats.llm,
+                                      "input_tokens": stats.usage.input_tokens,
+                                      "output_tokens": stats.usage.output_tokens})
+        except Exception as e:  # noqa: BLE001
+            self.state.update(error=str(e))
+        finally:
+            store.close()
+            self.state.update(running=False, step="")
+
+
+class SyncJob:
+    """一次只跑一個同步；網頁輪詢 /api/sync 取得進度。"""
+
+    def __init__(self, ai: AIJob | None = None) -> None:
+        self.lock = threading.Lock()
+        self.ai = ai
         self.state: dict[str, Any] = {"running": False, "step": "", "error": "", "error_kind": "", "result": None}
 
     def start(self, db_path: Path, months: int) -> None:
@@ -63,6 +105,9 @@ class SyncJob:
             )
             store.finish_run(run_id, "ok", result.invoices)
             self.state.update(result={"invoices": result.invoices, "new_details": result.details_fetched})
+            if self.ai is not None and not self.ai.state["running"]:
+                self.state.update(step="阿財分類新品項")
+                self.ai.run(db_path, background=False)
         except LoginRejected as e:
             store.finish_run(run_id, "error", 0, str(e))
             self.state.update(error=str(e), error_kind="login")
@@ -77,7 +122,10 @@ class SyncJob:
 def create_app(db_path: Path, demo: bool = False) -> FastAPI:
     app = FastAPI(title="摳摳 KouKou", version=__version__, docs_url=None, redoc_url=None, openapi_url=None)
     store = Store(db_path)
-    job = SyncJob()
+    ai_job = AIJob()
+    job = SyncJob(ai_job)
+    if not demo and store.pending_items():
+        ai_job.run(db_path)  # 舊帳本第一次打開：在背景把還沒分類的品項分好（純本機）
 
     @app.middleware("http")
     async def local_only(request: Request, call_next):
@@ -109,8 +157,46 @@ def create_app(db_path: Path, demo: bool = False) -> FastAPI:
         return store.merchants(month, limit=min(limit, 50))
 
     @app.get("/api/invoices")
-    def invoices(month: str | None = None, q: str = "", limit: int = 200, offset: int = 0) -> list[dict[str, Any]]:
-        return store.invoices(month, q.strip(), limit=min(limit, 500), offset=offset)
+    def invoices(
+        month: str | None = None, q: str = "", limit: int = 200, offset: int = 0, category: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return store.invoices(month, q.strip(), limit=min(limit, 500), offset=offset, category=category or None)
+
+    @app.get("/api/categories")
+    def categories() -> list[dict[str, str]]:
+        return [{"id": c.id, "hint": c.hint} for c in CATEGORIES]
+
+    @app.get("/api/breakdown")
+    def breakdown(month: str | None = None) -> list[dict[str, Any]]:
+        return store.breakdown(month or default_month())
+
+    @app.post("/api/items/category")
+    def fix_category(fix: CategoryFix) -> dict[str, Any]:
+        from ..ai.categorizer import categorize_store
+
+        if fix.category not in CATEGORY_IDS:
+            raise HTTPException(422, f"沒有「{fix.category}」這個分類")
+        applied = store.set_user_category(fix.description, fix.category)
+        # 內建小模型馬上用你的答案重新訓練，相似的品名跟著改（純本機，不到一秒）
+        before = {r["key"] for r in store.review_queue(500)}
+        categorize_store(store, None)
+        after = {r["key"] for r in store.review_queue(500)}
+        return {"applied_to": applied, "also_resolved": len(before - after - {normalize(fix.description)})}
+
+    @app.get("/api/ai/review")
+    def ai_review(limit: int = 30) -> list[dict[str, Any]]:
+        return store.review_queue(min(limit, 100))
+
+    @app.get("/api/ai")
+    def ai_status() -> dict[str, Any]:
+        info = llm.from_environment()
+        return {"configured": info.configured, "provider": info.name, "model": info.model, "hint": info.hint,
+                "stats": store.category_stats(), "uncategorized_label": UNCATEGORIZED, **ai_job.state}
+
+    @app.post("/api/ai/categorize")
+    def ai_run() -> dict[str, Any]:
+        ai_job.run(db_path)
+        return ai_job.state
 
     @app.get("/api/invoices/{inv_num}/items")
     def items(inv_num: str) -> list[dict[str, Any]]:

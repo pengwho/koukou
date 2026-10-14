@@ -6,12 +6,16 @@
 from __future__ import annotations
 
 import csv
+import functools
 import json
 import re
 import sqlite3
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from .ai.categories import UNCATEGORIZED, normalize
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS invoices (
@@ -46,6 +50,16 @@ CREATE TABLE IF NOT EXISTS sync_runs (
     message      TEXT
 );
 CREATE INDEX IF NOT EXISTS invoices_date ON invoices (inv_date);
+-- 阿財的分類快取：以正規化後的品名為鍵，同名品項共用一個分類
+CREATE TABLE IF NOT EXISTS item_categories (
+    key          TEXT PRIMARY KEY,
+    description  TEXT,
+    category     TEXT,
+    source       TEXT,          -- rule / llm / user / demo
+    confidence   REAL,
+    model        TEXT,
+    updated_at   TEXT
+);
 """
 
 # 外商在台分公司的前綴，例如「新加坡商蝦皮娛樂電商有限公司台灣分公司」
@@ -110,13 +124,29 @@ def header_date(header: dict[str, Any]) -> tuple[str | None, str | None]:
     return date, t
 
 
+def _locked(method):
+    """同一個 Store 可能被網頁的多個請求執行緒同時使用；一次只讓一個執行緒碰連線。
+    （共用連線加上 Python 自訂函式 koukou_norm，不加鎖會互相卡死。）"""
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
 class Store:
     def __init__(self, path: Path | str) -> None:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
         self.db = sqlite3.connect(path, check_same_thread=False)
+        self._lock = threading.RLock()
         self.db.row_factory = sqlite3.Row
+        self.db.execute("PRAGMA journal_mode=WAL")  # 背景同步寫入時，畫面照樣能讀
+        self.db.execute("PRAGMA busy_timeout=5000")
+        self.db.create_function("koukou_norm", 1, normalize, deterministic=True)
         self.db.executescript(SCHEMA)
 
     def close(self) -> None:
@@ -124,6 +154,7 @@ class Store:
 
     # ---- 寫入 -------------------------------------------------------------
 
+    @_locked
     def save(self, header: dict[str, Any], items: list[dict[str, Any]] | None) -> None:
         inv_num = header.get("invNum")
         if not inv_num:
@@ -152,9 +183,11 @@ class Store:
                     ],
                 )
 
+    @_locked
     def has_items(self, inv_num: str) -> bool:
         return self.db.execute("SELECT 1 FROM items WHERE inv_num = ? LIMIT 1", (inv_num,)).fetchone() is not None
 
+    @_locked
     def start_run(self, source: str) -> int:
         with self.db:
             cur = self.db.execute(
@@ -163,6 +196,7 @@ class Store:
             )
         return int(cur.lastrowid)
 
+    @_locked
     def finish_run(self, run_id: int, status: str, invoices: int, message: str = "") -> None:
         with self.db:
             self.db.execute(
@@ -172,12 +206,14 @@ class Store:
 
     # ---- 儀表板查詢 ---------------------------------------------------------
 
+    @_locked
     def months(self) -> list[str]:
         rows = self.db.execute(
             "SELECT DISTINCT substr(inv_date,1,7) m FROM invoices WHERE inv_date IS NOT NULL ORDER BY m"
         )
         return [r["m"] for r in rows]
 
+    @_locked
     def monthly(self) -> list[dict[str, Any]]:
         rows = self.db.execute(
             "SELECT substr(inv_date,1,7) AS month, COUNT(*) AS count, ROUND(SUM(amount)) AS amount "
@@ -185,6 +221,7 @@ class Store:
         )
         return [dict(r) for r in rows]
 
+    @_locked
     def summary(self, month: str) -> dict[str, Any]:
         row = self.db.execute(
             "SELECT COUNT(*) AS count, COALESCE(ROUND(SUM(amount)),0) AS amount, "
@@ -200,6 +237,7 @@ class Store:
         result["last_sync"] = dict(last) if last else None
         return result
 
+    @_locked
     def merchants(self, month: str | None = None, limit: int = 8) -> list[dict[str, Any]]:
         where, args = ("WHERE inv_date LIKE ?", [f"{month}%"]) if month else ("", [])
         rows = self.db.execute(
@@ -216,10 +254,21 @@ class Store:
             t["amount"] = round(t["amount"])
         return ranked[:limit]
 
+    @_locked
     def invoices(
-        self, month: str | None = None, q: str = "", limit: int = 200, offset: int = 0
+        self, month: str | None = None, q: str = "", limit: int = 200, offset: int = 0,
+        category: str | None = None,
     ) -> list[dict[str, Any]]:
         clauses, args = [], []
+        if category:
+            match = (
+                "EXISTS (SELECT 1 FROM items it LEFT JOIN item_categories c ON c.key = koukou_norm(it.description) "
+                "WHERE it.inv_num = i.inv_num AND it.amount > 0 AND COALESCE(c.category, ?) = ?)"
+            )
+            if category == UNCATEGORIZED:
+                match = f"({match} OR NOT EXISTS (SELECT 1 FROM items it WHERE it.inv_num = i.inv_num))"
+            clauses.append(match)
+            args += [UNCATEGORIZED, category]
         if month:
             clauses.append("i.inv_date LIKE ?")
             args.append(f"{month}%")
@@ -243,16 +292,177 @@ class Store:
             out.append(d)
         return out
 
+    @_locked
     def items(self, inv_num: str) -> list[dict[str, Any]]:
         rows = self.db.execute(
-            "SELECT row_num, description, quantity, unit_price, amount FROM items "
-            "WHERE inv_num = ? ORDER BY row_num",
+            "SELECT it.row_num, it.description, it.quantity, it.unit_price, it.amount, "
+            "c.category, c.source AS category_source, c.confidence "
+            "FROM items it LEFT JOIN item_categories c ON c.key = koukou_norm(it.description) "
+            "WHERE it.inv_num = ? ORDER BY it.row_num",
             (inv_num,),
         )
         return [dict(r) for r in rows]
 
+    # ---- 阿財的分類 ---------------------------------------------------------
+
+    @_locked
+    def pending_items(self, include_local: bool = False) -> list[tuple[str, str, str, float]]:
+        """還沒分類的品名：(key, 品名, 最常出現的店, 最大金額)。最大金額是負的才代表一定是折扣。
+        include_local=True 時，連內建小模型分過的也一起回傳（重算很便宜）。"""
+        from collections import Counter
+
+        cond = "(c.key IS NULL OR c.source = 'local')" if include_local else "c.key IS NULL"
+        rows = self.db.execute(
+            "SELECT it.description, i.seller_name, it.amount FROM items it JOIN invoices i USING (inv_num) "
+            "LEFT JOIN item_categories c ON c.key = koukou_norm(it.description) "
+            f"WHERE {cond} AND it.description IS NOT NULL AND it.description != ''"
+        ).fetchall()
+        groups: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            key = normalize(r["description"])
+            g = groups.setdefault(key, {"desc": r["description"], "shops": Counter(), "max": None})
+            g["shops"][merchant_name(r["seller_name"])] += 1
+            amt = r["amount"] if r["amount"] is not None else 0
+            g["max"] = amt if g["max"] is None else max(g["max"], amt)
+        return [(k, g["desc"], g["shops"].most_common(1)[0][0], g["max"]) for k, g in groups.items()]
+
+    @_locked
+    def save_categories(self, rows: list[tuple[str, str, str, str, float, str]]) -> None:
+        """rows: (key, 品名, 分類, 來源, 信心, 模型)。使用者改過的不會被覆蓋。"""
+        now = datetime.now().isoformat(timespec="seconds")
+        with self.db:
+            self.db.executemany(
+                "INSERT INTO item_categories VALUES (?,?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET "
+                "category=excluded.category, source=excluded.source, confidence=excluded.confidence, "
+                "model=excluded.model, updated_at=excluded.updated_at WHERE item_categories.source != 'user'",
+                [(*r, now) for r in rows],
+            )
+
+    @_locked
+    def set_user_category(self, description: str, category: str) -> int:
+        """使用者手動改分類；回傳同名品項有幾筆會一起套用。"""
+        key = normalize(description)
+        now = datetime.now().isoformat(timespec="seconds")
+        with self.db:
+            self.db.execute(
+                "INSERT INTO item_categories VALUES (?,?,?,'user',1.0,'',?) ON CONFLICT(key) DO UPDATE SET "
+                "category=excluded.category, source='user', confidence=1.0, model='', updated_at=excluded.updated_at",
+                (key, description, category, now),
+            )
+        return self.db.execute(
+            "SELECT COUNT(*) FROM items WHERE koukou_norm(description) = ?", (key,)
+        ).fetchone()[0]
+
+    @_locked
+    def user_examples(self, limit: int = 30) -> list[tuple[str, str]]:
+        rows = self.db.execute(
+            "SELECT description, category FROM item_categories WHERE source = 'user' "
+            "ORDER BY updated_at DESC LIMIT ?", (limit,),
+        )
+        return [(r["description"], r["category"]) for r in rows]
+
+    @_locked
+    @_locked
+    def review_queue(self, limit: int = 30, unsure_below: float = 0.6) -> list[dict[str, Any]]:
+        """阿財沒把握的品名，依「影響的金額」排序：先問最影響你帳本數字的。"""
+        rows = self.db.execute(
+            "SELECT c.key, c.description, c.category, c.source, c.confidence, "
+            "SUM(it.amount) AS total, COUNT(*) AS n, MAX(i.seller_name) AS seller "
+            "FROM item_categories c JOIN items it ON koukou_norm(it.description) = c.key "
+            "JOIN invoices i USING (inv_num) "
+            "WHERE c.source IN ('local', 'llm') AND (c.confidence < ? OR c.category = ?) AND it.amount > 0 "
+            "GROUP BY c.key ORDER BY total DESC LIMIT ?",
+            (unsure_below, UNCATEGORIZED, limit),
+        ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["store"] = merchant_name(d.pop("seller"))
+            d["total"] = round(d["total"] or 0)
+            out.append(d)
+        return out
+
+    @_locked
+    def item_index(self) -> list[dict[str, Any]]:
+        """每個品名一筆：目前的分類、來源、信心、最常出現的店、總金額。線上展示在瀏覽器裡重算用。"""
+        from collections import Counter
+
+        rows = self.db.execute(
+            "SELECT c.key, c.description, c.category, c.source, c.confidence, it.amount, i.seller_name "
+            "FROM item_categories c JOIN items it ON koukou_norm(it.description) = c.key "
+            "JOIN invoices i USING (inv_num)"
+        ).fetchall()
+        index: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            d = index.setdefault(r["key"], {
+                "key": r["key"], "description": r["description"], "category": r["category"],
+                "source": r["source"], "confidence": r["confidence"], "total": 0.0, "n": 0,
+                "max_amount": None, "_shops": Counter(),
+            })
+            amt = r["amount"] or 0
+            d["total"] += max(amt, 0)
+            d["n"] += 1
+            d["max_amount"] = amt if d["max_amount"] is None else max(d["max_amount"], amt)
+            d["_shops"][merchant_name(r["seller_name"])] += 1
+        for d in index.values():
+            d["store"] = d.pop("_shops").most_common(1)[0][0]
+            d["total"] = round(d["total"])
+        return list(index.values())
+
+    @_locked
+    def confident_llm_labels(self, min_confidence: float = 0.8) -> list[tuple[str, str]]:
+        """LLM 有把握的答案，拿來當內建小模型的額外訓練資料（本機蒸餾）。"""
+        rows = self.db.execute(
+            "SELECT description, category FROM item_categories WHERE source = 'llm' AND confidence >= ?",
+            (min_confidence,),
+        )
+        return [(r["description"], r["category"]) for r in rows]
+
+    def category_stats(self) -> dict[str, int]:
+        stats = {"rule": 0, "local": 0, "llm": 0, "user": 0, "demo": 0, "low_confidence": 0}
+        for r in self.db.execute("SELECT source, COUNT(*) n FROM item_categories GROUP BY source"):
+            stats[r["source"]] = r["n"]
+        stats["low_confidence"] = self.db.execute(
+            "SELECT COUNT(*) FROM item_categories "
+            "WHERE source IN ('llm', 'local') AND (confidence < 0.6 OR category = ?)",
+            (UNCATEGORIZED,),
+        ).fetchone()[0]
+        stats["pending"] = len(self.pending_items())
+        return stats
+
+    @_locked
+    def breakdown(self, month: str) -> list[dict[str, Any]]:
+        """當月各分類花多少。折扣、點數折抵和發票差額依比例攤回同一張發票的其他品項，
+        所以各分類加總會等於當月發票總額。"""
+        rows = self.db.execute(
+            "SELECT i.inv_num, i.amount AS inv_amount, it.amount, c.category FROM invoices i "
+            "LEFT JOIN items it USING (inv_num) "
+            "LEFT JOIN item_categories c ON c.key = koukou_norm(it.description) "
+            "WHERE i.inv_date LIKE ?", (f"{month}%",),
+        ).fetchall()
+        per_invoice: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            inv = per_invoice.setdefault(r["inv_num"], {"total": r["inv_amount"] or 0, "parts": []})
+            if r["amount"] is not None and r["amount"] > 0 and r["category"] != "折扣":
+                inv["parts"].append((r["category"] or UNCATEGORIZED, r["amount"]))
+        totals: dict[str, float] = {}
+        counts: dict[str, set[str]] = {}
+        for inv_num, inv in per_invoice.items():
+            parts = inv["parts"] or [(UNCATEGORIZED, inv["total"])]
+            base = sum(a for _, a in parts) or 1
+            for cat, amt in parts:
+                totals[cat] = totals.get(cat, 0) + amt * inv["total"] / base
+                counts.setdefault(cat, set()).add(inv_num)
+        grand = sum(totals.values()) or 1
+        out = [
+            {"category": cat, "amount": round(amt), "share": amt / grand, "invoices": len(counts[cat])}
+            for cat, amt in totals.items()
+        ]
+        return sorted(out, key=lambda d: d["amount"], reverse=True)
+
     # ---- 匯出 ---------------------------------------------------------------
 
+    @_locked
     def export_csv(self, out_dir: Path) -> list[Path]:
         out_dir.mkdir(parents=True, exist_ok=True)
         paths = []

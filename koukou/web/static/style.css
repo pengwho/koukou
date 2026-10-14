@@ -36,6 +36,7 @@ body {
 }
 button, input { font: inherit; color: inherit; }
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 6px; }
+[hidden] { display: none !important; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* ---- 頂欄 ---- */
@@ -236,3 +237,43 @@ button, input { font: inherit; color: inherit; }
 .sync-btn.primary { background: var(--stamp); color: #fff; }
 .sync-btn.primary:hover { background: var(--stamp); filter: brightness(1.08); }
 @media (max-width: 860px) { .live-banner { padding: 0 16px; text-align: center; } }
+
+/* ---- 分類 ---- */
+.cats .shop { cursor: pointer; border: 0; background: none; padding: 0; text-align: left; width: 100%; color: inherit; }
+.cats li { list-style: none; }
+.cats .shop[aria-pressed="true"] .shop-name { text-decoration: underline; text-decoration-color: var(--stamp); text-underline-offset: 4px; }
+.cats .shop-amt small { color: var(--ink-soft); font-family: var(--text); font-size: 13px; margin-right: 8px; }
+.filter { display: flex; align-items: baseline; gap: 6px; margin: 16px 0 0; font-size: 15px; color: var(--ink-soft); }
+.filter strong { color: var(--stamp); font-weight: 400; }
+.tag {
+  justify-self: start; border: 1px solid var(--rule); border-radius: 999px; padding: 0 8px;
+  font-size: 12px; line-height: 20px; color: var(--ink-soft); background: transparent; cursor: pointer; white-space: nowrap;
+}
+.tag:hover { border-color: var(--ink-soft); }
+.tag.unsure { border-style: dashed; }
+.tag.unsure::after { content: "？"; }
+.tag.mine { border-color: var(--ink); color: var(--ink); }
+.tag-select { font-size: 13px; border: 1px solid var(--focus); border-radius: 8px; padding: 1px 4px; background: var(--paper); }
+.inv-items li { align-items: center; }
+.inv-items .desc { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+.acai-meta { margin-top: 6px !important; font-size: 13px !important; }
+.sync-btn.small { margin-top: 10px; padding: 3px 14px; font-size: 14px; }
+.cats li:not(:first-child) .shop-fill { background: var(--ink); opacity: .75; }
+
+/* ---- 幫阿財確認 ---- */
+.acai-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.acai-actions .sync-btn.small { margin-top: 0; }
+.review { width: min(520px, calc(100vw - 32px)); }
+.review-card { border: 2px dashed var(--rule); border-radius: 12px; padding: 14px 16px; margin-bottom: 16px; }
+.review-item { margin: 0; font-size: 22px; line-height: 1.35; word-break: break-word; }
+.review-meta { margin: 4px 0 0; font-size: 14px; color: var(--ink-soft); }
+.review-guess { margin: 8px 0 0; font-size: 15px; }
+.review-guess strong { color: var(--stamp); font-weight: 400; }
+.review-choices { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.choice {
+  border: 1px solid var(--rule); border-radius: 999px; padding: 4px 12px; background: var(--paper);
+  font-size: 15px; cursor: pointer;
+}
+.choice:hover { border-color: var(--ink); }
+.choice.guess { border: 2px solid var(--stamp); color: var(--stamp); }
+.review-note { min-height: 1.5em; margin: 0 0 8px; font-size: 14px; color: var(--ink-soft); }

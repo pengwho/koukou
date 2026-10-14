@@ -13,6 +13,8 @@ from datetime import date
 from pathlib import Path
 
 from . import __version__
+from .ai import local_model
+from .ai.categories import CATEGORIES
 from .demo import build_demo_db
 from .web.app import STATIC
 
@@ -23,6 +25,11 @@ def ledger_json(store, demo: bool = True) -> dict:
         "meta": {"version": __version__, "demo": demo, "static": True, "months": months,
                  "default_month": months[-1] if months else None},
         "monthly": store.monthly(),
+        "categories": [{"id": c.id, "hint": c.hint} for c in CATEGORIES],
+        "ai": {"configured": False, "demo": True, "running": False, "stats": store.category_stats()},
+        # 線上展示的「幫阿財確認」：瀏覽器用同樣的訓練資料和演算法（koukou-model.js）重新訓練
+        "model": local_model.export_for_browser(),
+        "items": store.item_index(),
         "months": {},
     }
     for m in months:
