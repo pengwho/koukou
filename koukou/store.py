@@ -363,6 +363,26 @@ class Store:
 
     @_locked
     @_locked
+    def review_queue(self, limit: int = 30, unsure_below: float = 0.6) -> list[dict[str, Any]]:
+        """阿財沒把握的品名，依「影響的金額」排序：先問最影響你帳本數字的。"""
+        rows = self.db.execute(
+            "SELECT c.key, c.description, c.category, c.source, c.confidence, "
+            "SUM(it.amount) AS total, COUNT(*) AS n, MAX(i.seller_name) AS seller "
+            "FROM item_categories c JOIN items it ON koukou_norm(it.description) = c.key "
+            "JOIN invoices i USING (inv_num) "
+            "WHERE c.source IN ('local', 'llm') AND (c.confidence < ? OR c.category = ?) AND it.amount > 0 "
+            "GROUP BY c.key ORDER BY total DESC LIMIT ?",
+            (unsure_below, UNCATEGORIZED, limit),
+        ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["store"] = merchant_name(d.pop("seller"))
+            d["total"] = round(d["total"] or 0)
+            out.append(d)
+        return out
+
+    @_locked
     def confident_llm_labels(self, min_confidence: float = 0.8) -> list[tuple[str, str]]:
         """LLM 有把握的答案，拿來當內建小模型的額外訓練資料（本機蒸餾）。"""
         rows = self.db.execute(
@@ -376,7 +396,9 @@ class Store:
         for r in self.db.execute("SELECT source, COUNT(*) n FROM item_categories GROUP BY source"):
             stats[r["source"]] = r["n"]
         stats["low_confidence"] = self.db.execute(
-            "SELECT COUNT(*) FROM item_categories WHERE source IN ('llm', 'local') AND confidence < 0.6"
+            "SELECT COUNT(*) FROM item_categories "
+            "WHERE source IN ('llm', 'local') AND (confidence < 0.6 OR category = ?)",
+            (UNCATEGORIZED,),
         ).fetchone()[0]
         stats["pending"] = len(self.pending_items())
         return stats

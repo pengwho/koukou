@@ -259,3 +259,21 @@ button, input { font: inherit; color: inherit; }
 .acai-meta { margin-top: 6px !important; font-size: 13px !important; }
 .sync-btn.small { margin-top: 10px; padding: 3px 14px; font-size: 14px; }
 .cats li:not(:first-child) .shop-fill { background: var(--ink); opacity: .75; }
+
+/* ---- 幫阿財確認 ---- */
+.acai-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.acai-actions .sync-btn.small { margin-top: 0; }
+.review { width: min(520px, calc(100vw - 32px)); }
+.review-card { border: 2px dashed var(--rule); border-radius: 12px; padding: 14px 16px; margin-bottom: 16px; }
+.review-item { margin: 0; font-size: 22px; line-height: 1.35; word-break: break-word; }
+.review-meta { margin: 4px 0 0; font-size: 14px; color: var(--ink-soft); }
+.review-guess { margin: 8px 0 0; font-size: 15px; }
+.review-guess strong { color: var(--stamp); font-weight: 400; }
+.review-choices { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.choice {
+  border: 1px solid var(--rule); border-radius: 999px; padding: 4px 12px; background: var(--paper);
+  font-size: 15px; cursor: pointer;
+}
+.choice:hover { border-color: var(--ink); }
+.choice.guess { border: 2px solid var(--stamp); color: var(--stamp); }
+.review-note { min-height: 1.5em; margin: 0 0 8px; font-size: 14px; color: var(--ink-soft); }

@@ -24,6 +24,8 @@ from .categories import CATEGORY_IDS, normalize
 
 TRAINSET = Path(__file__).with_name("trainset.txt")
 STORE_WEIGHT = 3  # 店名特徵的權重（相當於出現幾次）
+WORD_WEIGHT = 3   # 英文單字特徵的權重
+STORE_GRAM_WEIGHT = 0.5
 ALPHA = 0.3       # 平滑
 
 
@@ -49,8 +51,14 @@ def load_trainset(path: Path = TRAINSET) -> list[Example]:
     return out
 
 
+def _stem(word: str) -> str:
+    return word[:-1] if len(word) > 4 and word.endswith("s") else word
+
+
 def features(text: str, store: str = "") -> Counter[str]:
-    t = re.sub(r"\d+", "0", normalize(text)).replace(" ", "")
+    norm = normalize(text)
+    # 中文用字元片段；英文只用整個單字（見下面），不讓英文字母片段淹沒其他特徵
+    t = re.sub(r"[a-z]+", "", re.sub(r"\d+", "0", norm)).replace(" ", "")
     t = f"^{t}$"
     feats: Counter[str] = Counter()
     for n in (1, 2, 3):
@@ -58,12 +66,15 @@ def features(text: str, store: str = "") -> Counter[str]:
             gram = t[i:i + n]
             if gram not in ("^", "$"):
                 feats[gram] += 1
+    # 英文品名用「整個單字」當特徵：字元片段在英文裡太常見，分不出 cake 跟 case
+    for word in re.findall(r"[a-z]{3,}", norm):
+        feats["字:" + _stem(word)] += WORD_WEIGHT
     if store:
         name = normalize(store)
         feats["店:" + name] += STORE_WEIGHT
         # 店名的兩字片段：沒看過的店，也能從「餐飲」「飲食」「壽司」「藥局」這類字眼猜出是哪種店
         for i in range(len(name) - 1):
-            feats["店2:" + name[i:i + 2]] += 1
+            feats["店2:" + name[i:i + 2]] += STORE_GRAM_WEIGHT
     return feats
 
 

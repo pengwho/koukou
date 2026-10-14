@@ -78,7 +78,10 @@
           <h2 id="acai-title">阿財</h2>
           <p id="acai-text">我是你的記帳小幫手，負責把每個品項分好類。</p>
           <p id="acai-meta" class="acai-meta"></p>
-          <button id="acai-run" class="sync-btn small" hidden>請阿財分類</button>
+          <div class="acai-actions">
+            <button id="acai-review" class="sync-btn small primary" hidden></button>
+            <button id="acai-run" class="sync-btn small" hidden>請 AI 複查</button>
+          </div>
         </div>
       </section>
     </aside>
@@ -115,6 +118,22 @@
         <button type="submit" class="sync-btn primary">連結並摳回發票</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="review" class="login review" aria-labelledby="review-title">
+    <h2 id="review-title">幫阿財確認</h2>
+    <p class="login-lead" id="review-progress"></p>
+    <div class="review-card">
+      <p class="review-item" id="review-item"></p>
+      <p class="review-meta" id="review-meta"></p>
+      <p class="review-guess" id="review-guess"></p>
+    </div>
+    <div class="review-choices" id="review-choices" role="group" aria-label="選一個分類"></div>
+    <p class="review-note" id="review-note" role="status" aria-live="polite"></p>
+    <div class="login-actions">
+      <button type="button" id="review-skip" class="ghost-btn">跳過</button>
+      <button type="button" id="review-done" class="sync-btn">先這樣</button>
+    </div>
   </dialog>
 
   <template id="invoice-row">

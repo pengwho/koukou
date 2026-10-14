@@ -181,8 +181,9 @@ function categoryTag(it) {
   const paint = () => {
     tag.textContent = it.category ?? "未分類";
     tag.classList.toggle("mine", it.category_source === "user");
-    tag.classList.toggle("unsure", it.category_source === "llm" && it.confidence < 0.6);
-    const who = { user: "你改的", llm: `阿財猜的（把握 ${Math.round((it.confidence ?? 0) * 100)}%）`,
+    tag.classList.toggle("unsure", ["llm", "local"].includes(it.category_source) && it.confidence < 0.6);
+    const sure = `把握 ${Math.round((it.confidence ?? 0) * 100)}%`;
+    const who = { user: "你改的", llm: `AI 複查（${sure}）`, local: `阿財猜的（${sure}）`,
                   rule: "規則判斷", demo: "展示資料" }[it.category_source] ?? "還沒分類";
     tag.title = `${who}，點一下修改`;
     tag.setAttribute("aria-label", `分類：${tag.textContent}，${who}，點一下修改`);
@@ -190,8 +191,8 @@ function categoryTag(it) {
   paint();
   tag.addEventListener("click", (e) => {
     e.stopPropagation();
-    if (state.demo) {
-      $("#sync-status").textContent = "展示資料不能改分類。在自己的帳本裡，改一次之後同名品項都會跟著改，阿財也會記住你的習慣。";
+    if (STATIC) {
+      $("#sync-status").textContent = "線上展示不能改分類。在自己的帳本裡，改一次之後同名和相似的品項都會跟著改。";
       return;
     }
     const select = document.createElement("select");
@@ -211,7 +212,8 @@ function categoryTag(it) {
             body: { description: it.description, category: select.value } });
           it.category = select.value;
           it.category_source = "user";
-          $("#sync-status").textContent = `已把「${it.description}」改成${select.value}，共 ${r.applied_to} 筆一起套用。`;
+          const more = r.also_resolved ? `，阿財也順便想通了另外 ${r.also_resolved} 種相似的品項` : "";
+          $("#sync-status").textContent = `已把「${it.description}」改成${select.value}（${r.applied_to} 筆）${more}。`;
           render();
           refreshAcai();
         } catch (err) {
@@ -257,40 +259,119 @@ function renderCategories(cats) {
 async function refreshAcai() {
   const ai = await api("api/ai");
   const s = ai.stats ?? {};
-  const done = (s.rule ?? 0) + (s.llm ?? 0) + (s.user ?? 0) + (s.demo ?? 0);
+  const done = (s.rule ?? 0) + (s.local ?? 0) + (s.llm ?? 0) + (s.user ?? 0) + (s.demo ?? 0);
+  const unsure = s.low_confidence ?? 0;
   const text = $("#acai-text");
   const meta = $("#acai-meta");
-  const btn = $("#acai-run");
-  btn.hidden = true;
+  const review = $("#acai-review");
+  const run = $("#acai-run");
+  review.hidden = true;
+  run.hidden = true;
   if (ai.running) {
     text.textContent = `正在分類：${ai.step}`;
     meta.textContent = "";
     setTimeout(refreshAcai, 1000);
     return;
   }
-  if (state.demo) {
-    text.textContent = `這份展示帳本的 ${done} 種品項都分好類了。點品項旁邊的分類標籤，可以看到它是怎麼分的。`;
-    meta.textContent = "在你自己的帳本裡，我用 Claude 或本機模型分類；你改過的分類我會記住。";
-    return;
-  }
   if (ai.error) {
     text.textContent = `分類沒完成：${ai.error}`;
-  } else if (s.pending > 0) {
-    text.textContent = ai.configured
-      ? `還有 ${s.pending} 種品項沒分類，要我幫忙嗎？`
-      : `還有 ${s.pending} 種品項沒分類。設定好 AI 之後我就能幫你分。`;
-    btn.hidden = !ai.configured;
-  } else if (done) {
-    text.textContent = `${done} 種品項都分好了。分錯的話，點品項旁的標籤改一下，我會記住。`;
+  } else if (!done) {
+    text.textContent = "摳回發票之後，我會幫每個品項分類。不用網路，也不用設定任何東西。";
+  } else if (unsure) {
+    text.textContent = `${done} 種品項我都分好了，其中 ${unsure} 種沒把握。幫我確認一下，相似的我會一起學起來。`;
+    review.hidden = false;
+    review.textContent = `幫我確認 ${unsure} 個`;
   } else {
-    text.textContent = "摳回發票之後，我會幫每個品項分類。";
+    text.textContent = `${done} 種品項都分好了。分錯的話點品項旁的標籤改一下，我會記住。`;
   }
   const parts = [];
   if (s.rule) parts.push(`規則 ${s.rule}`);
-  if (s.llm) parts.push(`AI ${s.llm}${s.low_confidence ? `（${s.low_confidence} 個沒把握）` : ""}`);
+  if (s.local) parts.push(`阿財自己判斷 ${s.local}`);
+  if (s.llm) parts.push(`AI 複查 ${s.llm}`);
   if (s.user) parts.push(`你改過 ${s.user}`);
-  meta.textContent = ai.configured ? `${parts.join("、")}${parts.length ? "。" : ""}模型：${ai.model}` : ai.hint;
+  if (s.demo) parts.push(`展示標註 ${s.demo}`);
+  meta.textContent = (parts.length ? parts.join("、") + "。" : "") +
+    (ai.configured ? `沒把握的會請 ${ai.model} 複查。` : "全部在這台電腦上完成。");
+  run.hidden = !(ai.configured && unsure && !STATIC);
 }
+
+// ---- 幫阿財確認：一次一個，先問影響金額最大的 ----
+const review = { queue: [], answered: 0, learned: 0 };
+
+async function openReview() {
+  if (STATIC) {
+    $("#sync-status").textContent = "線上展示不能改分類。裝在自己電腦上就能幫阿財確認，答案會馬上教會它。";
+    return;
+  }
+  review.queue = await api("api/ai/review?limit=50");
+  review.answered = 0;
+  review.learned = 0;
+  $("#review-note").textContent = "";
+  if (!review.queue.length) return;
+  showReviewItem();
+  $("#review").showModal();
+}
+
+function showReviewItem() {
+  const item = review.queue[0];
+  if (!item) {
+    $("#review").close();
+    if (review.answered) {
+      const more = review.learned ? `，阿財順便學會了另外 ${review.learned} 種相似的` : "";
+      $("#sync-status").textContent = `謝謝！確認了 ${review.answered} 個${more}。`;
+    }
+    render();
+    refreshAcai();
+    return;
+  }
+  const guessed = item.category !== "未分類";
+  $("#review-progress").textContent = `還有 ${review.queue.length} 個沒把握，先問影響金額最大的。`;
+  $("#review-item").textContent = item.description;
+  $("#review-meta").textContent = `${item.store}，共 ${item.n} 次，${money(item.total)}`;
+  $("#review-guess").innerHTML = guessed
+    ? `阿財猜是<strong></strong>（把握 ${Math.round(item.confidence * 100)}%）`
+    : "阿財猜不出來";
+  if (guessed) $("#review-guess strong").textContent = item.category;
+  const box = $("#review-choices");
+  box.replaceChildren();
+  for (const c of state.categories) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "choice" + (c.id === item.category ? " guess" : "");
+    b.textContent = c.id;
+    b.title = c.hint;
+    b.addEventListener("click", () => answerReview(item, c.id));
+    box.append(b);
+  }
+  box.querySelector(".guess, .choice")?.focus();
+}
+
+async function answerReview(item, category) {
+  $("#review-choices").querySelectorAll("button").forEach((b) => (b.disabled = true));
+  try {
+    const r = await api("api/items/category", { method: "POST", body: { description: item.description, category } });
+    review.answered += 1;
+    review.learned += r.also_resolved;
+    $("#review-note").textContent = r.also_resolved
+      ? `學到了！另外 ${r.also_resolved} 種相似的品項也一起有把握了。`
+      : "記住了。";
+    review.queue = await api("api/ai/review?limit=50");
+  } catch (e) {
+    $("#review-note").textContent = e.message;
+    review.queue.shift();
+  }
+  showReviewItem();
+}
+
+$("#acai-review").addEventListener("click", openReview);
+$("#review-skip").addEventListener("click", () => {
+  review.queue.push(review.queue.shift());
+  if (review.queue.length > 1) showReviewItem();
+});
+$("#review-done").addEventListener("click", () => {
+  review.queue = [];
+  showReviewItem();
+});
 
 $("#acai-run").addEventListener("click", async () => {
   try {

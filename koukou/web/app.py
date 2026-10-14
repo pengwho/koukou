@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 
 from .. import __version__, config, credentials
 from ..ai import llm
-from ..ai.categories import CATEGORIES, CATEGORY_IDS, UNCATEGORIZED
+from ..ai.categories import CATEGORIES, CATEGORY_IDS, UNCATEGORIZED, normalize
 from ..store import Store
 
 STATIC = Path(__file__).parent / "static"
@@ -170,11 +170,20 @@ def create_app(db_path: Path, demo: bool = False) -> FastAPI:
 
     @app.post("/api/items/category")
     def fix_category(fix: CategoryFix) -> dict[str, Any]:
-        if demo:
-            raise HTTPException(400, "展示模式不能改分類。")
+        from ..ai.categorizer import categorize_store
+
         if fix.category not in CATEGORY_IDS:
             raise HTTPException(422, f"沒有「{fix.category}」這個分類")
-        return {"applied_to": store.set_user_category(fix.description, fix.category)}
+        applied = store.set_user_category(fix.description, fix.category)
+        # 內建小模型馬上用你的答案重新訓練，相似的品名跟著改（純本機，不到一秒）
+        before = {r["key"] for r in store.review_queue(500)}
+        categorize_store(store, None)
+        after = {r["key"] for r in store.review_queue(500)}
+        return {"applied_to": applied, "also_resolved": len(before - after - {normalize(fix.description)})}
+
+    @app.get("/api/ai/review")
+    def ai_review(limit: int = 30) -> list[dict[str, Any]]:
+        return store.review_queue(min(limit, 100))
 
     @app.get("/api/ai")
     def ai_status() -> dict[str, Any]:
@@ -184,8 +193,6 @@ def create_app(db_path: Path, demo: bool = False) -> FastAPI:
 
     @app.post("/api/ai/categorize")
     def ai_run() -> dict[str, Any]:
-        if demo:
-            raise HTTPException(400, "展示資料已經分類好了。")
         ai_job.run(db_path)
         return ai_job.state
 

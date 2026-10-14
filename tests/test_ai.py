@@ -185,10 +185,10 @@ def test_api_correction_and_status(web):
     bad = web.post("/api/items/category", headers=H, json={"description": "鮮奶", "category": "亂填"})
     assert bad.status_code == 422
     r = web.post("/api/items/category", headers=H, json={"description": "鮮奶", "category": "生鮮雜貨"})
-    assert r.json() == {"applied_to": 1}
+    assert r.json()["applied_to"] == 1
     assert web.get("/api/ai").json()["stats"]["user"] == 1
     cats = {c["category"] for c in web.get("/api/breakdown", params={"month": "2026-10"}).json()}
-    assert cats == {"生鮮雜貨", "未分類"}
+    assert cats == {"生鮮雜貨", "零食點心"}  # 改一個之後，內建小模型順便把其他品項也分好了
 
 
 def test_api_categorize_runs_with_configured_provider(web, monkeypatch):
@@ -203,3 +203,36 @@ def test_api_categorize_runs_with_configured_provider(web, monkeypatch):
         time.sleep(0.05)
     assert state["result"]["rule"] + state["result"]["local"] + state["result"]["llm"] == 2
     assert state["stats"]["pending"] == 0
+
+
+def test_review_queue_orders_by_money_and_learns(tmp_path):
+    store = Store(tmp_path / "k.sqlite3")
+    for n, (desc, amt) in enumerate([("神秘禮盒 A款", 900), ("神秘禮盒 B款", 500), ("小東西", 30)]):
+        store.save({"invNum": f"AA0000000{n}", "amount": str(amt), "sellerName": "某某有限公司",
+                    "invDate": {"year": "115", "month": "10", "date": "1"}},
+                   [{"rowNum": "1", "description": desc, "amount": str(amt)}])
+    names = ("神秘禮盒 A款", "神秘禮盒 B款", "小東西")
+    store.save_categories([(normalize(d), d, "未分類", "local", 0.2, "") for d in names])
+    queue = store.review_queue()
+    assert [q["description"] for q in queue] == ["神秘禮盒 A款", "神秘禮盒 B款", "小東西"]  # 金額大的先問
+    store.set_user_category("神秘禮盒 A款", "娛樂")
+    categorize_store(store, None)  # 重新訓練：相似品名跟著學
+    assert store.items("AA00000001")[0]["category"] == "娛樂"
+    assert [q["description"] for q in store.review_queue()] == ["小東西"]
+
+
+def test_api_correction_reports_propagation(tmp_path, monkeypatch):
+    monkeypatch.setattr(credentials, "_keyring", lambda: None)
+    store = Store(tmp_path / "k.sqlite3")
+    for n, desc in enumerate(["神秘禮盒 A款", "神秘禮盒 B款"]):
+        store.save({"invNum": f"AA0000000{n}", "amount": "100", "sellerName": "某某有限公司",
+                    "invDate": {"year": "115", "month": "10", "date": "1"}},
+                   [{"rowNum": "1", "description": desc, "amount": "100"}])
+    store.save_categories([(normalize(d), d, "未分類", "local", 0.2, "") for d in ("神秘禮盒 A款", "神秘禮盒 B款")])
+    store.close()
+    web = TestClient(create_app(tmp_path / "k.sqlite3"), base_url="http://127.0.0.1")
+    assert len(web.get("/api/ai/review").json()) == 2
+    fix = {"description": "神秘禮盒 A款", "category": "娛樂"}
+    r = web.post("/api/items/category", headers={"X-KouKou": "1"}, json=fix)
+    assert r.json() == {"applied_to": 1, "also_resolved": 1}
+    assert web.get("/api/ai/review").json() == []

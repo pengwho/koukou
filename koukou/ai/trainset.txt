@@ -867,3 +867,49 @@ OK 超商|麥芽牛奶
 飲料店|綠茶 微糖去冰
 飲料店|紅茶 熱
 飲料店|鮮奶茶 半糖
+
+# ---- 常見英文餐飲字彙（外商、進口商品、英文菜單）----
+@餐飲
+好市多|meatball sub
+星巴克|chicken sandwich
+摩斯漢堡|cheeseburger
+漢堡王|beef burger meal
+Subway|veggie salad
+摩斯漢堡|nuggets 5pcs
+好市多|steak bowl
+外商餐廳|curry rice
+外商餐廳|fried rice
+外商餐廳|ramen noodle
+外商餐廳|spaghetti carbonara
+外商餐廳|grilled salmon
+外商餐廳|fish and chips
+外商餐廳|pork chop rice
+外商餐廳|kids meal
+外商餐廳|main course
+外商餐廳|side dish
+外商餐廳|combo meal
+@咖啡飲料
+星巴克|caffe latte
+星巴克|cappuccino tall
+星巴克|espresso double
+路易莎|americano iced
+外商咖啡|milk tea
+外商咖啡|green tea latte
+外商咖啡|hot chocolate
+外商咖啡|lemonade
+外商咖啡|smoothie mango
+外商咖啡|cola zero
+外商咖啡|mineral water
+@零食點心
+星巴克|blueberry muffin
+星巴克|chocolate brownie
+星巴克|cheesecake new york
+外商烘焙|croissant butter
+外商烘焙|donut glazed
+外商烘焙|waffle
+外商烘焙|cookie oatmeal
+外商烘焙|pudding caramel
+外商烘焙|macaron
+外商烘焙|tart egg
+好市多|chocolate bar
+好市多|gummy bears
