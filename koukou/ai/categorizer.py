@@ -25,6 +25,7 @@ MAX_EXAMPLES = 30
 LLM_THRESHOLD = 0.75  # 小模型信心低於這個才請 LLM 再看一次
 UNSURE = 0.6          # 畫面上用虛線標出沒把握的分類，也會列進「請你確認」
 ABSTAIN = 0.3         # 低於這個就不硬猜，標成未分類
+USER_WEIGHT = 3.0     # 你的一筆修正抵幾筆內建範例；太高會把不相干的品項也拉走
 
 SYSTEM_PROMPT = (
     "你是台灣記帳工具「摳摳」裡的分類小幫手阿財。使用者會給你電子發票上的品項名稱和店名，"
@@ -142,7 +143,7 @@ def classify(
     stats = RunStats()
     out: list[Guess | None] = [None] * len(items)
     model = local_model.build([
-        *(local_model.Example(d, "", c, weight=5.0) for d, c in (examples or [])),  # 你的修正最優先
+        *(local_model.Example(d, "", c, weight=USER_WEIGHT) for d, c in (examples or [])),  # 你的修正優先
         *(extra_training or []),
     ])
     for i, it in enumerate(items):

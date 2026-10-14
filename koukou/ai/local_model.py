@@ -64,7 +64,7 @@ def features(text: str, store: str = "") -> Counter[str]:
     for n in (1, 2, 3):
         for i in range(len(t) - n + 1):
             gram = t[i:i + n]
-            if gram not in ("^", "$"):
+            if gram.strip("^$0"):  # 只有數字或邊界的片段不算特徵：商品編號、容量不該影響分類
                 feats[gram] += 1
     # 英文品名用「整個單字」當特徵：字元片段在英文裡太常見，分不出 cake 跟 case
     for word in re.findall(r"[a-z]{3,}", norm):
