@@ -29,6 +29,7 @@ class Report:
     llm_covered: int
     llm_correct: int
     unanswered: int
+    abstained: int = 0
     per_category: dict[str, dict[str, int]] = field(default_factory=dict)
     confusions: list[tuple[str, str, str, str]] = field(default_factory=list)  # (店, 品名, 標準答案, 猜的)
     input_tokens: int = 0
@@ -67,6 +68,8 @@ def evaluate(provider: Provider | None, rows: list[dict] | None = None, llm_thre
         if g is None:
             rep.unanswered += 1
             continue
+        if g.category == "未分類":
+            rep.abstained += 1
         ok = g.category == gold
         rep.correct += ok
         cat["correct"] += ok
@@ -108,6 +111,8 @@ def format_report(rep: Report) -> str:
         lines.append(f"  平均信心     答對 {rep.right_confidence}，答錯 {rep.wrong_confidence}")
         tokens = f"輸入 {rep.input_tokens:,} / 輸出 {rep.output_tokens:,} tokens"
         lines.append(f"  用量         {rep.calls} 次呼叫，{tokens}，{rep.seconds} 秒")
+    if rep.abstained:
+        lines.append(f"  沒把握不猜   {rep.abstained} 個（標成未分類，算答錯）")
     if rep.unanswered:
         lines.append(f"  沒有答案     {rep.unanswered} 個（規則判斷不了，且沒有設定模型）")
     lines += ["", "  各分類召回率"]

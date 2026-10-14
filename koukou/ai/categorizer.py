@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from . import local_model
-from .categories import CATEGORIES, CATEGORY_IDS, rule_category
+from .categories import CATEGORIES, CATEGORY_IDS, UNCATEGORIZED, rule_category
 from .llm import LLMError, Provider, Usage
 
 log = logging.getLogger("koukou.ai")
@@ -23,7 +23,8 @@ log = logging.getLogger("koukou.ai")
 BATCH_SIZE = 40
 MAX_EXAMPLES = 30
 LLM_THRESHOLD = 0.75  # 小模型信心低於這個才請 LLM 再看一次
-UNSURE = 0.6          # 畫面上用虛線標出沒把握的分類
+UNSURE = 0.6          # 畫面上用虛線標出沒把握的分類，也會列進「請你確認」
+ABSTAIN = 0.3         # 低於這個就不硬猜，標成未分類
 
 SYSTEM_PROMPT = (
     "你是台灣記帳工具「摳摳」裡的分類小幫手阿財。使用者會給你電子發票上的品項名稱和店名，"
@@ -153,7 +154,7 @@ def classify(
         # 正數品項不可能是折扣；被分成折扣的話金額會被攤掉，所以直接排除
         exclude = frozenset({"折扣"}) if it.amount is not None and it.amount > 0 else frozenset()
         cat, conf = model.predict(it.description, it.store, exclude)
-        out[i] = Guess(cat, conf, "local")
+        out[i] = Guess(cat if conf >= ABSTAIN else UNCATEGORIZED, conf, "local")
         stats.local += 1
     todo = [i for i, g in enumerate(out) if g and g.source == "local" and g.confidence < llm_threshold]
     if provider is None or not todo:

@@ -702,3 +702,168 @@ momo|折價券
 洗衣店|洗衣 計件
 郵局|郵票
 政府|規費
+
+# ---- 第二批：看過真實帳本的錯誤型態後補的「通用」例子（不是任何人的真實消費紀錄）----
+# 英文品名（IKEA、外商、進口商品的發票常是英文）
+@餐飲
+IKEA|BEEF LASAGNA
+IKEA|CHICKEN WINGS 6PCS
+IKEA|SALMON FILLET PLATE
+IKEA|VEGGIE BALLS 10P
+IKEA|HOT DOG
+IKEA|PLANT BALLS PLATE
+IKEA|MASHED POTATO
+IKEA|PASTA BOLOGNESE
+IKEA|SOUP OF THE DAY
+IKEA|FRIES LARGE
+好市多|CHICKEN BAKE
+好市多|PIZZA SLICE
+星巴克|TURKEY SANDWICH
+Subway|6 INCH TUNA SUB
+Subway|潛艇堡 6吋 雞肉
+@零食點心
+IKEA|SOFT ICE CREAM
+IKEA|CINNAMON BUN
+IKEA|ALMOND CAKE
+IKEA|CHOCOLATE MOUSSE CAKE
+IKEA|STRAWBERRY CHEESECAKE
+IKEA|DAIM CAKE
+好市多|MUFFIN 6PK
+好市多|POTATO CHIPS
+7-ELEVEN|COOKIES CHOCOLATE CHIP
+@咖啡飲料
+IKEA|SOFT DRINK REFILL
+IKEA|COFFEE REGULAR
+IKEA|LINGONBERRY DRINK
+IKEA|BUBBLE TEA
+IKEA|ICED LEMON TEA
+好市多|SPARKLING WATER 24PK
+好市多|ORANGE JUICE 2L
+星巴克|ICED SHAKEN TEA
+@居家家具
+IKEA|SAMLA box with lid
+IKEA|KUGGIS storage box
+IKEA|SKUBB box set of 3
+IKEA|DRÖNA box grey
+IKEA|lid for box white
+IKEA|storage bag transparent
+IKEA|clothes hanger 8 pack
+IKEA|bookend black
+IKEA|wall shelf white
+IKEA|cushion cover
+IKEA|curtains 1 pair
+IKEA|frame 21x30
+IKEA|plant pot
+IKEA|chopping board
+IKEA|frying pan 28cm
+IKEA|mug 4 pack
+IKEA|storage case
+IKEA|drawer organiser
+IKEA|shoe rack
+IKEA|LED strip light
+特力屋|工具組 套筒
+特力屋|五金 螺絲 組
+蝦皮|剝線鉗 工具
+蝦皮|砂紙 打磨 120號
+蝦皮|噴漆 罐裝
+蝦皮|壓克力板 透明
+@日用品
+IKEA|lint roller
+IKEA|garbage bags
+IKEA|cleaning brush
+IKEA|zip bag 60 pack
+蝦皮|晴雨傘 自動折疊
+7-ELEVEN|飲料提袋
+全家|提袋 兩杯用
+OK 超商|鹼性電池 3號 4入
+@3C家電
+蝦皮|USB-C cable 2m
+蝦皮|HDMI adapter
+蝦皮|PoE switch 8 port
+蝦皮|Wi-Fi mesh router
+蝦皮|SSD 500GB NVMe
+蝦皮|網路線 Cat6 3m
+蝦皮|轉接頭 Type-C 轉 USB
+蝦皮|智慧插座 WiFi
+蝦皮|標籤機
+@服飾
+迪卡儂|cycling gloves
+迪卡儂|running shorts
+迪卡儂|袖套 防曬
+蝦皮|防曬袖套
+UNIQLO|UV CUT 外套
+@娛樂
+蝦皮|線上課程 程式
+Hahow|線上課程
+Udemy|course
+遊樂園|入園門票
+動物園|門票 全票
+玩具反斗城|玩具 積木
+7-ELEVEN|集點公仔
+7-ELEVEN|聯名 絨毛娃娃
+全家|一番賞
+@其他
+蝦皮|訂單編號 備註
+7-ELEVEN|商品條碼 未命名
+全家|會員訂閱 月費
+# 餐廳／小吃店：店名常含「餐飲」「飲食店」「小吃」「壽司」「麵」，品項常是定食、小菜、白飯、盤子
+@餐飲
+和民餐飲|豬排定食
+和民餐飲|炸雞塊定食
+王品餐飲|牛排套餐
+王品餐飲|主餐 加點
+王品餐飲|白飯
+四季飲食店|小菜 拼盤
+四季飲食店|燙青菜
+四季飲食店|炒手麵
+四季飲食店|滷蛋
+四季飲食店|貢丸湯
+阿財小吃店|陽春麵
+阿財小吃店|餛飩湯
+阿財小吃店|豬血湯
+阿財小吃店|滷味拼盤
+富春餐飲|定食 副餐
+富春餐飲|蓋飯 雞肉
+富春餐飲|丼飯
+台灣壽司郎|30元盤
+台灣壽司郎|40元盤
+台灣壽司郎|茶碗蒸
+台灣壽司郎|味噌湯
+爭鮮|紅盤
+爭鮮|黃盤
+藏壽司|扭蛋 盤
+健康餐盒|雞胸肉餐盒
+健康餐盒|舒肥雞便當
+健康餐盒|鮭魚餐盒
+牛肉麵館|紅燒牛肉麵 小
+牛肉麵館|麻醬乾麵
+早午餐店|炸雞腿排 套餐
+火鍋店|個人鍋 豬肉
+@零食點心
+冰店|豆花 芋圓
+冰店|剉冰 紅豆
+冰店|雪花冰 芒果
+冰店|綠豆沙
+7-ELEVEN|雪酪 芒果
+7-ELEVEN|雪酪 葡萄
+全家|雪糕 牛奶
+OK 超商|銅鑼燒 紅豆 6入
+OK 超商|老婆餅 盒裝
+OK 超商|蛋黃酥
+全聯|仙貝 鹽味
+全聯|米菓 醬油
+全聯|脆片 起司
+蜜餞行|梅子 蜜餞
+@咖啡飲料
+7-ELEVEN|高蛋白 牛乳飲 可可
+7-ELEVEN|調味乳 巧克力 TP
+全家|奶茶風味 乳飲品
+萊爾富|果汁牛乳
+OK 超商|麥芽牛奶
+7-ELEVEN|優格飲 草莓
+全家|豆奶 營養
+7-ELEVEN|杏仁飲 減糖
+7-ELEVEN|運動飲料 寶礦力
+飲料店|綠茶 微糖去冰
+飲料店|紅茶 熱
+飲料店|鮮奶茶 半糖

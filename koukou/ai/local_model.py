@@ -59,7 +59,11 @@ def features(text: str, store: str = "") -> Counter[str]:
             if gram not in ("^", "$"):
                 feats[gram] += 1
     if store:
-        feats["店:" + normalize(store)] += STORE_WEIGHT
+        name = normalize(store)
+        feats["店:" + name] += STORE_WEIGHT
+        # 店名的兩字片段：沒看過的店，也能從「餐飲」「飲食」「壽司」「藥局」這類字眼猜出是哪種店
+        for i in range(len(name) - 1):
+            feats["店2:" + name[i:i + 2]] += 1
     return feats
 
 
