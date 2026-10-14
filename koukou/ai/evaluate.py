@@ -1,7 +1,7 @@
 """用人工標註的測試集評估阿財：規則層的覆蓋率與準確率、LLM 的準確率、常見誤判、token 用量。
 
-    koukou ai eval                 # 規則 + 目前設定的模型
-    koukou ai eval --rules-only    # 只量規則層（不需要金鑰）
+    koukou ai eval                 # 規則 + 內建小模型 +（有設定的話）LLM
+    koukou ai eval --offline       # 只量不需要網路的部分：規則 + 內建小模型
 """
 
 from __future__ import annotations
@@ -24,6 +24,8 @@ class Report:
     correct: int
     rule_covered: int
     rule_correct: int
+    local_covered: int
+    local_correct: int
     llm_covered: int
     llm_correct: int
     unanswered: int
@@ -45,13 +47,15 @@ def load_evalset(path: Path = EVALSET) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-def evaluate(provider: Provider | None, rows: list[dict] | None = None) -> Report:
+def evaluate(provider: Provider | None, rows: list[dict] | None = None, llm_threshold: float | None = None) -> Report:
     rows = rows if rows is not None else load_evalset()
     items = [Item(r["item"], r["store"]) for r in rows]
-    guesses, stats = classify(items, provider)
+    kwargs = {} if llm_threshold is None else {"llm_threshold": llm_threshold}
+    guesses, stats = classify(items, provider, **kwargs)
     rep = Report(
-        model=getattr(provider, "model", "") if provider else "rules-only",
-        total=len(rows), correct=0, rule_covered=0, rule_correct=0, llm_covered=0, llm_correct=0, unanswered=0,
+        model=getattr(provider, "model", "") if provider else "離線（規則＋內建小模型）",
+        total=len(rows), correct=0, rule_covered=0, rule_correct=0, local_covered=0, local_correct=0,
+        llm_covered=0, llm_correct=0, unanswered=0,
         input_tokens=stats.usage.input_tokens, output_tokens=stats.usage.output_tokens,
         calls=stats.usage.calls, seconds=round(stats.usage.seconds, 2),
     )
@@ -69,6 +73,9 @@ def evaluate(provider: Provider | None, rows: list[dict] | None = None) -> Repor
         if g.source == "rule":
             rep.rule_covered += 1
             rep.rule_correct += ok
+        elif g.source == "local":
+            rep.local_covered += 1
+            rep.local_correct += ok
         else:
             rep.llm_covered += 1
             rep.llm_correct += ok
@@ -93,6 +100,8 @@ def format_report(rep: Report) -> str:
         f"  整體準確率   {_pct(rep.correct, rep.total)}  ({rep.correct}/{rep.total})",
         f"  規則層       覆蓋 {_pct(rep.rule_covered, rep.total)}，準確 {_pct(rep.rule_correct, rep.rule_covered)}",
     ]
+    local_acc = _pct(rep.local_correct, rep.local_covered)
+    lines.append(f"  內建小模型   負責 {_pct(rep.local_covered, rep.total)}，準確 {local_acc}")
     if rep.llm_covered:
         llm_acc = _pct(rep.llm_correct, rep.llm_covered)
         lines.append(f"  LLM 層       準確 {llm_acc}  ({rep.llm_correct}/{rep.llm_covered})")

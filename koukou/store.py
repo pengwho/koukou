@@ -306,14 +306,16 @@ class Store:
     # ---- 阿財的分類 ---------------------------------------------------------
 
     @_locked
-    def pending_items(self) -> list[tuple[str, str, str, float]]:
-        """還沒分類的品名：(key, 品名, 最常出現的店, 最大金額)。最大金額是負的才代表一定是折扣。"""
+    def pending_items(self, include_local: bool = False) -> list[tuple[str, str, str, float]]:
+        """還沒分類的品名：(key, 品名, 最常出現的店, 最大金額)。最大金額是負的才代表一定是折扣。
+        include_local=True 時，連內建小模型分過的也一起回傳（重算很便宜）。"""
         from collections import Counter
 
+        cond = "(c.key IS NULL OR c.source = 'local')" if include_local else "c.key IS NULL"
         rows = self.db.execute(
             "SELECT it.description, i.seller_name, it.amount FROM items it JOIN invoices i USING (inv_num) "
             "LEFT JOIN item_categories c ON c.key = koukou_norm(it.description) "
-            "WHERE c.key IS NULL AND it.description IS NOT NULL AND it.description != ''"
+            f"WHERE {cond} AND it.description IS NOT NULL AND it.description != ''"
         ).fetchall()
         groups: dict[str, dict[str, Any]] = {}
         for r in rows:
@@ -360,12 +362,21 @@ class Store:
         return [(r["description"], r["category"]) for r in rows]
 
     @_locked
+    @_locked
+    def confident_llm_labels(self, min_confidence: float = 0.8) -> list[tuple[str, str]]:
+        """LLM 有把握的答案，拿來當內建小模型的額外訓練資料（本機蒸餾）。"""
+        rows = self.db.execute(
+            "SELECT description, category FROM item_categories WHERE source = 'llm' AND confidence >= ?",
+            (min_confidence,),
+        )
+        return [(r["description"], r["category"]) for r in rows]
+
     def category_stats(self) -> dict[str, int]:
-        stats = {"rule": 0, "llm": 0, "user": 0, "demo": 0, "low_confidence": 0}
+        stats = {"rule": 0, "local": 0, "llm": 0, "user": 0, "demo": 0, "low_confidence": 0}
         for r in self.db.execute("SELECT source, COUNT(*) n FROM item_categories GROUP BY source"):
             stats[r["source"]] = r["n"]
         stats["low_confidence"] = self.db.execute(
-            "SELECT COUNT(*) FROM item_categories WHERE source = 'llm' AND confidence < 0.6"
+            "SELECT COUNT(*) FROM item_categories WHERE source IN ('llm', 'local') AND confidence < 0.6"
         ).fetchone()[0]
         stats["pending"] = len(self.pending_items())
         return stats

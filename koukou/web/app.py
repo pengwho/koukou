@@ -64,7 +64,7 @@ class AIJob:
         try:
             info = llm.from_environment()
             stats = categorize_store(store, info.provider, progress=lambda m: self.state.update(step=m))
-            self.state.update(result={"rule": stats.rule, "llm": stats.llm, "failed": stats.failed,
+            self.state.update(result={"rule": stats.rule, "local": stats.local, "llm": stats.llm,
                                       "input_tokens": stats.usage.input_tokens,
                                       "output_tokens": stats.usage.output_tokens})
         except Exception as e:  # noqa: BLE001

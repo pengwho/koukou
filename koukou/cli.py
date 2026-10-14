@@ -112,9 +112,8 @@ def cmd_ai(args: argparse.Namespace) -> int:
     if args.ai_command == "eval":
         from .ai.evaluate import evaluate, format_report, save_report
 
-        if not info.configured and not args.rules_only:
-            print(f"還沒設定模型：{info.hint}。先只跑規則層。\n")
-        rep = evaluate(None if args.rules_only else info.provider)
+        offline = args.offline or not info.configured
+        rep = evaluate(None if offline else info.provider)
         print(format_report(rep))
         if args.report:
             save_report(rep, args.report)
@@ -125,10 +124,9 @@ def cmd_ai(args: argparse.Namespace) -> int:
     from .ai.categorizer import categorize_store
 
     store = Store(args.db)
-    if not info.configured:
-        print(f"還沒設定模型：{info.hint}。這次只用規則分類。")
     stats = categorize_store(store, info.provider, progress=lambda m: print(f"  {m}"))
-    print(f"完成：規則 {stats.rule} 個、阿財（{info.model or '無'}）{stats.llm} 個、未完成 {stats.failed} 個。")
+    llm_part = f"、{info.model} 複查 {stats.llm} 個" if info.configured else "（沒有設定 LLM，全部在本機完成）"
+    print(f"完成：規則 {stats.rule} 個、內建小模型 {stats.local} 個{llm_part}。")
     if stats.usage.calls:
         u = stats.usage
         print(f"用量：{u.calls} 次呼叫，輸入 {u.input_tokens:,} / 輸出 {u.output_tokens:,} tokens")
@@ -185,7 +183,7 @@ def main(argv: list[str] | None = None) -> int:
     a = ai_sub.add_parser("categorize", help="把還沒分類的品項分類")
     a.add_argument("--db", type=Path, default=config.default_db())
     a = ai_sub.add_parser("eval", help="用人工標註的測試集評估分類準確率")
-    a.add_argument("--rules-only", action="store_true", help="只量規則層，不呼叫模型")
+    a.add_argument("--offline", "--rules-only", action="store_true", help="不呼叫 LLM，只量規則＋內建小模型")
     a.add_argument("--report", type=Path, help="把結果存成 JSON")
     p.set_defaults(func=cmd_ai)
 

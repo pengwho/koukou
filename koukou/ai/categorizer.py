@@ -1,6 +1,7 @@
-"""阿財的分類流程：規則 → 快取 → LLM 批次。
+"""阿財的分類流程：規則 → 內建小模型 → （有設定的話）LLM 只處理小模型沒把握的。
 
-- 同一個品名（正規化後）只分類一次，結果存在 item_categories，之後所有同名品項共用。
+- 不需要任何金鑰或網路：規則加內建小模型就能分完全部品項。
+- 同一個品名（正規化後）的結果存在 item_categories，之後所有同名品項共用。
 - 使用者手動改過的分類優先權最高，也會被當成 few-shot 範例，讓阿財學你的習慣。
 - 送給模型的只有「品名」和「店名」，不送金額、日期、發票號碼或載具。
 """
@@ -13,6 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import local_model
 from .categories import CATEGORIES, CATEGORY_IDS, rule_category
 from .llm import LLMError, Provider, Usage
 
@@ -20,6 +22,8 @@ log = logging.getLogger("koukou.ai")
 
 BATCH_SIZE = 40
 MAX_EXAMPLES = 30
+LLM_THRESHOLD = 0.75  # 小模型信心低於這個才請 LLM 再看一次
+UNSURE = 0.6          # 畫面上用虛線標出沒把握的分類
 
 SYSTEM_PROMPT = (
     "你是台灣記帳工具「摳摳」裡的分類小幫手阿財。使用者會給你電子發票上的品項名稱和店名，"
@@ -64,12 +68,13 @@ class Item:
 class Guess:
     category: str
     confidence: float
-    source: str  # rule / llm / user / demo
+    source: str  # rule / local / llm / user / demo
 
 
 @dataclass
 class RunStats:
     rule: int = 0
+    local: int = 0
     llm: int = 0
     failed: int = 0
     usage: Usage = field(default_factory=Usage)
@@ -129,31 +134,39 @@ def classify(
     examples: list[tuple[str, str]] | None = None,
     batch_size: int = BATCH_SIZE,
     progress: Callable[[int, int], None] = lambda done, total: None,
+    extra_training: list[local_model.Example] | None = None,
+    llm_threshold: float = LLM_THRESHOLD,
 ) -> tuple[list[Guess | None], RunStats]:
-    """完整 cascade（不含快取）：先規則，再把剩下的分批交給 LLM。評估也用這個函式。"""
+    """完整 cascade（不含快取）：規則 → 內建小模型 → LLM（只看小模型沒把握的）。評估也用這個函式。"""
     stats = RunStats()
     out: list[Guess | None] = [None] * len(items)
-    todo = []
+    model = local_model.build([
+        *(local_model.Example(d, "", c, weight=5.0) for d, c in (examples or [])),  # 你的修正最優先
+        *(extra_training or []),
+    ])
     for i, it in enumerate(items):
         cat = rule_category(it.description, it.amount)
         if cat:
             out[i] = Guess(cat, 1.0, "rule")
             stats.rule += 1
-        else:
-            todo.append(i)
-    if provider is None:
-        stats.failed = len(todo)
+            continue
+        # 正數品項不可能是折扣；被分成折扣的話金額會被攤掉，所以直接排除
+        exclude = frozenset({"折扣"}) if it.amount is not None and it.amount > 0 else frozenset()
+        cat, conf = model.predict(it.description, it.store, exclude)
+        out[i] = Guess(cat, conf, "local")
+        stats.local += 1
+    todo = [i for i, g in enumerate(out) if g and g.source == "local" and g.confidence < llm_threshold]
+    if provider is None or not todo:
         return out, stats
     for start in range(0, len(todo), batch_size):
         chunk = todo[start:start + batch_size]
         guesses, usage = classify_with_llm(provider, [items[i] for i in chunk], examples)
         stats.usage.add(usage)
         for i, g in zip(chunk, guesses, strict=True):
-            out[i] = g
-            if g:
+            if g:  # LLM 沒回答的就保留小模型的答案
+                out[i] = g
                 stats.llm += 1
-            else:
-                stats.failed += 1
+                stats.local -= 1
         progress(min(start + batch_size, len(todo)), len(todo))
     return out, stats
 
@@ -162,14 +175,16 @@ def categorize_store(
     store, provider: Provider | None, progress: Callable[[str], None] = lambda msg: None,
 ) -> RunStats:
     """把帳本裡還沒分類的品名分類好，寫回快取表。"""
-    pending = store.pending_items()  # [(key, 品名, 店名, 最大金額)]
+    # 小模型的舊答案每次都重算：你剛改過的分類會馬上影響相似的品名
+    pending = store.pending_items(include_local=True)  # [(key, 品名, 店名, 最大金額)]
     if not pending:
         return RunStats()
     items = [Item(desc, shop, amount) for _, desc, shop, amount in pending]
-    progress(f"整理 {len(items)} 個新品名")
+    progress(f"整理 {len(items)} 個品名")
     guesses, stats = classify(
-        items, provider, store.user_examples(MAX_EXAMPLES),
-        progress=lambda done, total: progress(f"阿財分類中 {done}/{total}"),
+        items, provider, store.user_examples(200),
+        progress=lambda done, total: progress(f"請 AI 複查沒把握的 {done}/{total}"),
+        extra_training=[local_model.Example(d, "", c) for d, c in store.confident_llm_labels()],
     )
     model = getattr(provider, "model", "") if provider else ""
     store.save_categories([

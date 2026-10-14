@@ -50,7 +50,7 @@ def test_rules_are_precise():
     assert normalize("  Ｃｏｋｅ   Zero ") == "coke zero"
 
 
-def test_rules_baseline_on_evalset_is_never_wrong():
+def test_rules_on_evalset_are_never_wrong():
     rep = evaluate(None)
     assert rep.total >= 100
     assert rep.rule_covered > 0 and rep.rule_correct == rep.rule_covered
@@ -66,7 +66,7 @@ def test_llm_retries_missing_and_rejects_bogus_categories():
 
 def test_classify_uses_rules_before_llm():
     fake = FakeLLM({"茶葉蛋": "生鮮雜貨"})
-    out, stats = classify([Item("運費"), Item("茶葉蛋")], fake)
+    out, stats = classify([Item("運費"), Item("茶葉蛋")], fake, llm_threshold=1.01)
     assert (out[0].source, out[1].source) == ("rule", "llm")
     assert stats.rule == 1 and stats.llm == 1
     assert "運費" not in fake.prompts[0]  # 規則能判斷的不會送給模型
@@ -80,17 +80,45 @@ def _store_with(tmp_path, items):
     return store
 
 
-def test_categorize_store_caches_by_name_and_respects_user(tmp_path):
+def test_categorize_store_works_without_any_ai_and_respects_user(tmp_path):
     store = _store_with(tmp_path, [("鮮奶", 90), ("鮮奶", 90), ("促銷折扣", -10), ("霜淇淋", 30)])
     store.set_user_category("霜淇淋", "零食點心")
-    fake = FakeLLM({"鮮奶": "生鮮雜貨"})
-    stats = categorize_store(store, fake)
-    assert stats.llm == 1 and stats.rule == 1  # 兩筆鮮奶只問一次；折扣走規則；使用者改過的不重問
-    assert "使用者以前親手改過" in fake.prompts[0] and "霜淇淋 → 零食點心" in fake.prompts[0]
+    stats = categorize_store(store, None)  # 沒有金鑰、沒有網路
+    assert stats.rule == 1 and stats.local == 1 and stats.llm == 0  # 兩筆鮮奶算一個品名
     assert store.category_stats()["pending"] == 0
-    assert categorize_store(store, fake).llm == 0  # 第二次全部命中快取
     store.save_categories([(normalize("霜淇淋"), "霜淇淋", "其他", "llm", 0.9, "x")])
-    assert store.items("AA00000001")[3]["category"] == "零食點心"  # 使用者的修正不會被模型覆蓋
+    assert store.items("AA00000001")[3]["category"] == "零食點心"  # 使用者的修正不會被覆蓋
+
+
+def test_user_corrections_retrain_local_model(tmp_path):
+    store = _store_with(tmp_path, [("阿嬤的私房醬菜", 120), ("阿嬤的私房醬菜 小", 80)])
+    store.set_user_category("阿嬤的私房醬菜", "娛樂")  # 刻意改成很少見的分類
+    categorize_store(store, None)
+    assert store.items("AA00000001")[1]["category"] == "娛樂"  # 相似品名跟著你的習慣走
+
+
+def test_llm_only_reviews_unsure_local_guesses(tmp_path):
+    store = _store_with(tmp_path, [("鮮奶", 90), ("霜淇淋", 30)])
+    store.set_user_category("霜淇淋", "零食點心")
+    fake = FakeLLM({"鮮奶": "生鮮雜貨"})
+    out, stats = classify([Item("鮮奶", "全聯", 90), Item("運費")], fake, store.user_examples(),
+                          llm_threshold=1.01)  # 門檻設超高：小模型的答案全部送 LLM 複查
+    assert [g.source for g in out] == ["llm", "rule"] and stats.llm == 1
+    assert "霜淇淋 → 零食點心" in fake.prompts[0] and "運費" not in fake.prompts[0]
+    _, stats = classify([Item("鮮奶", "全聯", 90)], FakeLLM(), llm_threshold=0)
+    assert stats.local == 1 and stats.llm == 0  # 門檻 0：小模型全權處理，不花錢
+
+
+def test_positive_items_are_never_discounts():
+    out, _ = classify([Item("滿千折百", "家樂福", 199)], None)
+    assert out[0].category != "折扣"
+
+
+def test_offline_accuracy_floor():
+    """沒有任何金鑰時，規則＋內建小模型在保留測試集上的準確率不能退步。"""
+    rep = evaluate(None)
+    assert rep.unanswered == 0
+    assert rep.accuracy >= 0.85, rep.accuracy
 
 
 def test_breakdown_allocates_discounts_and_sums_to_total(tmp_path):
@@ -113,7 +141,7 @@ def test_demo_breakdown_matches_monthly_totals(tmp_path):
 def test_evaluate_with_perfect_fake_model():
     rows = load_evalset()
     fake = FakeLLM({r["item"]: r["category"] for r in rows})
-    rep = evaluate(fake, rows)
+    rep = evaluate(fake, rows, llm_threshold=1.01)
     assert rep.correct == rep.total and not rep.confusions
     assert rep.calls >= 1 and rep.input_tokens > 0
 
@@ -153,7 +181,7 @@ def web(tmp_path, monkeypatch):
 def test_api_correction_and_status(web):
     H = {"X-KouKou": "1"}
     ai = web.get("/api/ai").json()
-    assert not ai["configured"] and ai["stats"]["pending"] == 2
+    assert not ai["configured"] and ai["stats"]["pending"] == 2  # 還沒跑過分類
     bad = web.post("/api/items/category", headers=H, json={"description": "鮮奶", "category": "亂填"})
     assert bad.status_code == 422
     r = web.post("/api/items/category", headers=H, json={"description": "鮮奶", "category": "生鮮雜貨"})
@@ -173,4 +201,5 @@ def test_api_categorize_runs_with_configured_provider(web, monkeypatch):
         if not state["running"]:
             break
         time.sleep(0.05)
-    assert state["result"]["llm"] == 2 and state["stats"]["pending"] == 0
+    assert state["result"]["rule"] + state["result"]["local"] + state["result"]["llm"] == 2
+    assert state["stats"]["pending"] == 0
