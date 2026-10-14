@@ -1,6 +1,7 @@
 """koukou-model.js（線上展示用）必須跟 Python 版給出一模一樣的答案。需要 node；沒有就跳過。"""
 
 import json
+import os
 import random
 import shutil
 import subprocess
@@ -32,7 +33,8 @@ console.log(JSON.stringify(out));
 """
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="需要 node")
+# 本機沒有 node 可以跳過；CI 上一定要跑，不能悄悄略過
+@pytest.mark.skipif(shutil.which("node") is None and not os.environ.get("CI"), reason="需要 node")
 def test_js_model_matches_python(tmp_path):
     from koukou.ai.categorizer import ABSTAIN, USER_WEIGHT
 
