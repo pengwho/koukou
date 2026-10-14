@@ -48,6 +48,8 @@ koukou serve
 
 **不用任何設定。** 摳回發票後，阿財會用內建的小模型把每個品項分好類：不用網路、不用 API 金鑰、不用另外裝軟體，三百種品名不到一秒。有沒把握的，它會在畫面上請你確認，你答一題，它就重新學一次，相似的品項跟著改。
 
+<img src="docs/review.webp" width="420" alt="「幫阿財確認」視窗：顯示一個沒把握的品項、阿財的猜測和信心，以及可以點選的分類">
+
 ```mermaid
 flowchart LR
   A[發票品項] --> B{規則<br>只放不會錯的}
@@ -61,8 +63,8 @@ flowchart LR
   R -- 你的答案 --> C
 ```
 
-- **內建小模型。** 純 Python 的 Naive Bayes：中文用字元片段、英文用整個單字、店名也是特徵（同樣的「月費」在健身房是娛樂）。訓練資料是 900 多筆手寫標註的台灣發票品項（`koukou/ai/trainset.txt`），訓練不到 0.1 秒，所以每次分類前都把你的修正加進去重新訓練，不用存模型檔。
-- **主動學習。** 「幫阿財確認」一次問一題，依影響金額排序。答案馬上變成訓練資料（權重 3 倍），相似品名跟著學會；在真實帳本上模擬，答 18 題後待確認清單從 48 個降到 24 個。
+- **內建小模型。** 純 Python 的 Naive Bayes：中文用字元片段、英文用整個單字、店名也是特徵（同樣的「月費」在健身房是娛樂）。訓練資料是 862 筆手寫標註的台灣發票品項（`koukou/ai/trainset.txt`），訓練不到 0.1 秒，所以每次分類前都把你的修正加進去重新訓練，不用存模型檔。
+- **主動學習。** 「幫阿財確認」一次問一題，依影響金額排序。答案馬上變成訓練資料（權重 3 倍），相似品名跟著學會；在真實帳本上模擬，答 20 題後待確認清單從 51 個降到 28 個（多解決的 3 個是相似品名跟著學會的）。
 - **不硬猜。** 信心低於 0.3 的標成「未分類」；0.3 到 0.6 的畫面上用虛線標出來，並列進確認清單。
 - **LLM 是選配。** 有 Claude API 金鑰（`koukou ai setup`）或本機模型（`KOUKOU_AI_PROVIDER=openai KOUKOU_AI_MODEL=qwen2.5:7b`）的話，只把小模型沒把握的送去複查；LLM 有把握的答案也會回頭變成小模型的訓練資料。送出去的只有品名和店名，不送金額、日期、發票號碼或載具。
 - **數字對得起來。** 折扣、點數折抵和發票差額依比例攤回同一張發票的其他品項，各分類加總等於當月發票總額。
@@ -135,7 +137,7 @@ flowchart LR
 
 **KouKou** (摳摳, Taiwanese slang for *money*; 摳 also means *to dig out* and *to be thrifty*) is a local-first personal finance hub for Taiwan.
 
-It pulls your e-invoices — every receipt tied to your mobile barcode carrier, down to line items — by speaking the official mobile app's API directly, stores them in a SQLite ledger on your own machine, and shows them in a small local web app. An assistant, **A-Tsâi (阿財, "little fortune")**, categorizes every line item with zero setup: high-precision rules, then a built-in pure-Python Naive Bayes model (Chinese character n-grams, English word features, store-name features) trained on ~900 hand-labeled Taiwanese receipt items. It abstains when unsure, asks you about the uncertain items ranked by spending impact, and retrains instantly on each answer (active learning). An LLM (Claude or any OpenAI-compatible local model) is optional and only reviews low-confidence guesses. Offline accuracy: 89.7% on a held-out 126-item test set; ~81% on the author's real ledger (289 item names, judged by hand), up from ~66% for the first version after error analysis on real data. Bank accounts are next.
+It pulls your e-invoices — every receipt tied to your mobile barcode carrier, down to line items — by speaking the official mobile app's API directly, stores them in a SQLite ledger on your own machine, and shows them in a small local web app. An assistant, **A-Tsâi (阿財, "little fortune")**, categorizes every line item with zero setup: high-precision rules, then a built-in pure-Python Naive Bayes model (Chinese character n-grams, English word features, store-name features) trained on 862 hand-labeled Taiwanese receipt items. It abstains when unsure, asks you about the uncertain items ranked by spending impact, and retrains instantly on each answer (active learning). An LLM (Claude or any OpenAI-compatible local model) is optional and only reviews low-confidence guesses. Offline accuracy: 89.7% on a held-out 126-item test set; ~81% on the author's real ledger (289 item names, judged by hand), up from ~66% for the first version after error analysis on real data. Bank accounts are next.
 
 **[Try the live demo](https://pengwho.github.io/koukou/)** (generated data, nothing to install), or run it on your own invoices:
 
