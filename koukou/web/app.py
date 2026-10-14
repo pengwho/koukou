@@ -124,6 +124,8 @@ def create_app(db_path: Path, demo: bool = False) -> FastAPI:
     store = Store(db_path)
     ai_job = AIJob()
     job = SyncJob(ai_job)
+    if not demo and store.pending_items():
+        ai_job.run(db_path)  # 舊帳本第一次打開：在背景把還沒分類的品項分好（純本機）
 
     @app.middleware("http")
     async def local_only(request: Request, call_next):

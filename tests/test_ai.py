@@ -175,13 +175,25 @@ def web(tmp_path, monkeypatch):
     credentials._secrets.clear()
     store = _store_with(tmp_path, [("鮮奶", 90), ("霜淇淋", 30)])
     store.close()
-    return TestClient(create_app(tmp_path / "k.sqlite3"), base_url="http://127.0.0.1")
+    client = TestClient(create_app(tmp_path / "k.sqlite3"), base_url="http://127.0.0.1")
+    _wait_ai(client)  # 打開舊帳本時，背景會先用內建小模型分類一次
+    return client
+
+
+def _wait_ai(client):
+    for _ in range(200):
+        state = client.get("/api/ai").json()
+        if not state["running"]:
+            return state
+        time.sleep(0.05)
+    raise AssertionError("AI job did not finish")
 
 
 def test_api_correction_and_status(web):
     H = {"X-KouKou": "1"}
     ai = web.get("/api/ai").json()
-    assert not ai["configured"] and ai["stats"]["pending"] == 2  # 還沒跑過分類
+    assert not ai["configured"] and ai["stats"]["pending"] == 0  # 沒有金鑰，開啟時就在本機分好了
+    assert ai["stats"]["local"] == 2
     bad = web.post("/api/items/category", headers=H, json={"description": "鮮奶", "category": "亂填"})
     assert bad.status_code == 422
     r = web.post("/api/items/category", headers=H, json={"description": "鮮奶", "category": "生鮮雜貨"})
@@ -196,11 +208,7 @@ def test_api_categorize_runs_with_configured_provider(web, monkeypatch):
     monkeypatch.setattr(llm, "from_environment",
                         lambda: llm.ProviderInfo(True, "fake", "fake-1", "", fake))
     assert web.post("/api/ai/categorize", headers={"X-KouKou": "1"}).status_code == 200
-    for _ in range(100):
-        state = web.get("/api/ai").json()
-        if not state["running"]:
-            break
-        time.sleep(0.05)
+    state = _wait_ai(web)
     assert state["result"]["rule"] + state["result"]["local"] + state["result"]["llm"] == 2
     assert state["stats"]["pending"] == 0
 

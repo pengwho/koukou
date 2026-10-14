@@ -25,7 +25,7 @@
 | --- | --- |
 | 摳摳＝錢 | 把手機條碼的電子發票（之後還有銀行帳戶）收進**你自己電腦上**的一本帳 |
 | 摳＝挖出來 | 模擬官方 App 的協定把資料抓回來，不用一張一張手動匯出 |
-| 摳＝省 | AI 助理**阿財**幫每個品項分類，看出錢花在什麼上；你改過的分類它會記住 |
+| 摳＝省 | 助理**阿財**用內建的小模型幫每個品項分類，不用設定；沒把握的會問你，越用越準 |
 
 ### 先看看長什麼樣子
 
@@ -46,39 +46,48 @@ koukou serve
 
 ### 阿財怎麼分類
 
-```bash
-koukou ai setup        # 貼上 Claude API 金鑰（存進鑰匙圈）
-koukou ai categorize   # 或在網頁上按「請阿財分類」；每次摳回發票後也會自動分新品項
-koukou ai eval         # 用人工標註的測試集量準確率
-```
+**不用任何設定。** 摳回發票後，阿財會用內建的小模型把每個品項分好類：不用網路、不用 API 金鑰、不用另外裝軟體，三百種品名不到一秒。有沒把握的，它會在畫面上請你確認，你答一題，它就重新學一次，相似的品項跟著改。
 
 ```mermaid
 flowchart LR
   A[發票品項] --> B{規則<br>只放不會錯的}
-  B -- 命中 --> Z[(分類快取<br>同品名只分一次)]
-  B -- 沒把握 --> C{快取裡有？}
-  C -- 有 --> Z
-  C -- 沒有 --> D[LLM 批次<br>40 個一批<br>JSON schema 輸出]
-  E[你親手改過的分類] -- few-shot 範例 --> D
-  E -- 永遠優先 --> Z
+  B -- 命中 --> Z[(分類)]
+  B -- 沒把握 --> C[內建小模型<br>字元 n-gram + 店名<br>Naive Bayes]
+  C -- 有把握 --> Z
+  C -- 信心 < 0.3 --> U[未分類<br>不硬猜]
+  C -- 信心 < 0.75 且有設定 LLM --> D[Claude 或本機 LLM 複查<br>選用]
   D --> Z
+  Z -- 沒把握的 --> R[幫阿財確認<br>先問影響金額最大的]
+  R -- 你的答案 --> C
 ```
 
-- **分層，便宜又快。** 高精準的關鍵字規則先處理（例如「無鉛汽油」→交通、負數→折扣），每個品名只問模型一次，結果快取起來；一份半年的帳本大約 300 種品名，一次就分完，之後每天只有新品名要問。
-- **隱私。** 送給模型的只有「品名」和「店名」，不送金額、日期、發票號碼或載具。想完全不出電腦，可以接本機模型：`KOUKOU_AI_PROVIDER=openai KOUKOU_AI_MODEL=qwen2.5:7b`（Ollama 或任何 OpenAI 相容 API）。
-- **越用越準。** 點品項旁的分類標籤就能改，同名品項一起套用；你改過的分類不會被模型覆蓋，還會被當成範例放進提示詞。
-- **模型不能亂答。** 用 tool use 強制輸出 JSON schema，分類必須在清單內；漏掉的品項會補問一次，信心低的在畫面上用虛線標出來。
-- **數字對得起來。** 折扣、點數折抵和發票差額依比例攤回同一張發票的其他品項，所以各分類加總等於當月發票總額。
+- **內建小模型。** 純 Python 的 Naive Bayes：中文用字元片段、英文用整個單字、店名也是特徵（同樣的「月費」在健身房是娛樂）。訓練資料是 900 多筆手寫標註的台灣發票品項（`koukou/ai/trainset.txt`），訓練不到 0.1 秒，所以每次分類前都把你的修正加進去重新訓練，不用存模型檔。
+- **主動學習。** 「幫阿財確認」一次問一題，依影響金額排序。答案馬上變成訓練資料（權重 3 倍），相似品名跟著學會；在真實帳本上模擬，答 18 題後待確認清單從 48 個降到 24 個。
+- **不硬猜。** 信心低於 0.3 的標成「未分類」；0.3 到 0.6 的畫面上用虛線標出來，並列進確認清單。
+- **LLM 是選配。** 有 Claude API 金鑰（`koukou ai setup`）或本機模型（`KOUKOU_AI_PROVIDER=openai KOUKOU_AI_MODEL=qwen2.5:7b`）的話，只把小模型沒把握的送去複查；LLM 有把握的答案也會回頭變成小模型的訓練資料。送出去的只有品名和店名，不送金額、日期、發票號碼或載具。
+- **數字對得起來。** 折扣、點數折抵和發票差額依比例攤回同一張發票的其他品項，各分類加總等於當月發票總額。
 
-**評估。** `koukou/ai/evalset.jsonl` 是 126 個人工標註的台灣發票品項（超商、量販、外送、加油、藥妝……），刻意包含「霜淇淋在 IKEA」「美式雞腿堡不是咖啡」這類容易錯的例子。
+```bash
+koukou ai categorize   # 命令列分類（網頁上會自動做）
+koukou ai eval         # 用保留測試集量準確率
+koukou ai setup        # 選用：設定 Claude API 金鑰
+```
 
-| 層 | 覆蓋率 | 準確率 |
-| --- | ---: | ---: |
-| 規則（測試集） | 19.8% | 100% |
-| 規則（作者真實帳本，289 種品名，人工逐筆檢查） | 13.5% | 100% |
-| LLM | 其餘全部 | 執行 `koukou ai eval` 量測 |
+#### 準確率
 
-規則的兩個誤判（「美式雞腿堡」「多力多滋美式辣起士」被當成咖啡）是拿真實帳本跑出來才發現的；修正後同類例子已經加進測試集當回歸測試。
+| 資料 | 規則 | 內建小模型 | 整體（不用任何金鑰） |
+| --- | --- | --- | ---: |
+| **保留測試集**：126 個人工標註品項，訓練時完全沒看過 | 覆蓋 19.8%，準確 100% | 準確 87.1% | **89.7%** |
+| **作者真實帳本**：289 種品名，人工逐筆判斷 | 39 個，全對 | 250 個：對 196、錯 36、不猜 18 | **81%**（錯 12.5%、未分類 6%） |
+
+真實帳本的數字比測試集低，這是預期中的事，也是這個專案最有價值的一課：
+
+1. 第一版只在自己寫的測試集上量，看起來有 87%；拿真實帳本跑，只有約 66%。真實發票有大量英文品名（IKEA 的 `SWEDISH MEATBALLS`、`UPPSNOFSAD box`）、店內術語（壽司郎的「60元盤子」、「定食副餐」）、商品編號和聯名玩具，這些是手寫測試集沒涵蓋到的。
+2. 依錯誤型態補了**通用**的訓練例子（不是把真實紀錄抄進來）、英文改用單字特徵、加上店名片段（「餐飲」「飲食店」），並讓模型沒把握時不猜：66% → 75% → 81%。
+3. 規則層也是拿真實資料跑才發現「美式雞腿堡」被當成咖啡，修正後同類例子加進測試集當回歸測試。
+4. 修正權重一開始太高（5 倍），導致改一個「750616@三商鮮五丼」，純數字的商品編號都被拉成餐飲；拿掉純數字特徵、降到 3 倍後副作用消失。
+
+真實帳本的 81% 是看過這些錯誤之後改出來的，所以偏樂觀；保留測試集的 89.7% 才是乾淨的數字。真實資料的內容沒有放進這個 repo。
 
 ### 它怎麼運作
 
@@ -108,7 +117,7 @@ flowchart LR
 - [x] 電子發票：表頭、品項、增量同步、CSV 匯出
 - [x] 本機網頁介面與展示模式
 - [x] 線上展示（GitHub Pages）、網頁上直接連結手機條碼、帳密存鑰匙圈
-- [x] **阿財**：LLM 品項分類（規則＋快取＋LLM、使用者修正、評估）
+- [x] **阿財**：品項分類（規則＋內建小模型＋選用 LLM、主動學習、評估）
 - [ ] **阿財**：用自然語言問帳本（text-to-SQL，唯讀與白名單防護）
 - [ ] MCP server：讓 Claude 等 AI 直接查你的帳本
 - [ ] 第一家銀行（Playwright）
@@ -126,7 +135,7 @@ flowchart LR
 
 **KouKou** (摳摳, Taiwanese slang for *money*; 摳 also means *to dig out* and *to be thrifty*) is a local-first personal finance hub for Taiwan.
 
-It pulls your e-invoices — every receipt tied to your mobile barcode carrier, down to line items — by speaking the official mobile app's API directly, stores them in a SQLite ledger on your own machine, and shows them in a small local web app. An AI assistant, **A-Tsâi (阿財, "little fortune")**, categorizes every line item: precise keyword rules first, a per-name cache, then batched LLM calls (Claude, or any OpenAI-compatible local model) with schema-constrained output; your corrections override the model and are fed back as few-shot examples. A hand-labeled 126-item eval set (`koukou ai eval`) measures accuracy per layer. Bank accounts are next.
+It pulls your e-invoices — every receipt tied to your mobile barcode carrier, down to line items — by speaking the official mobile app's API directly, stores them in a SQLite ledger on your own machine, and shows them in a small local web app. An assistant, **A-Tsâi (阿財, "little fortune")**, categorizes every line item with zero setup: high-precision rules, then a built-in pure-Python Naive Bayes model (Chinese character n-grams, English word features, store-name features) trained on ~900 hand-labeled Taiwanese receipt items. It abstains when unsure, asks you about the uncertain items ranked by spending impact, and retrains instantly on each answer (active learning). An LLM (Claude or any OpenAI-compatible local model) is optional and only reviews low-confidence guesses. Offline accuracy: 89.7% on a held-out 126-item test set; ~81% on the author's real ledger (289 item names, judged by hand), up from ~66% for the first version after error analysis on real data. Bank accounts are next.
 
 **[Try the live demo](https://pengwho.github.io/koukou/)** (generated data, nothing to install), or run it on your own invoices:
 
