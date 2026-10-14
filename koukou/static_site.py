@@ -12,14 +12,15 @@ import tempfile
 from datetime import date
 from pathlib import Path
 
-from . import __version__
+from . import __version__, lottery, recurring
 from .ai import local_model
 from .ai.categories import CATEGORIES
 from .demo import build_demo_db
 from .web.app import STATIC
 
 
-def ledger_json(store, demo: bool = True) -> dict:
+def ledger_json(store, demo: bool = True, today: date | None = None) -> dict:
+    today = today or date.today()
     months = store.months()
     data = {
         "meta": {"version": __version__, "demo": demo, "static": True, "months": months,
@@ -30,6 +31,9 @@ def ledger_json(store, demo: bool = True) -> dict:
         # 線上展示的「幫阿財確認」：瀏覽器用同樣的訓練資料和演算法（koukou-model.js）重新訓練
         "model": local_model.export_for_browser(),
         "items": store.item_index(),
+        "lottery": {"periods": lottery.summarize(store.lottery_invoices(), store.draws(), today),
+                    "fetching": False, "error": ""},
+        "recurring": recurring.summary(store.purchase_rows(), today),
         "months": {},
     }
     for m in months:
@@ -56,7 +60,7 @@ def build(out: Path, today: date | None = None) -> Path:
 
     with tempfile.TemporaryDirectory() as tmp:
         store = build_demo_db(Path(tmp) / "demo.sqlite3", today=today)
-        payload = ledger_json(store)
+        payload = ledger_json(store, today=today)
         store.close()
     (out / "data").mkdir()
     (out / "data" / "ledger.json").write_text(

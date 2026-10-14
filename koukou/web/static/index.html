@@ -57,6 +57,11 @@
     </section>
 
     <aside class="side">
+      <section class="panel lottery" aria-labelledby="lottery-title" hidden>
+        <h2 id="lottery-title">對獎</h2>
+        <div id="lottery"></div>
+      </section>
+
       <section class="panel" aria-labelledby="trend-title">
         <h2 id="trend-title">每個月花多少</h2>
         <div id="trend" class="trend" role="group" aria-label="每月消費，點一下切換月份"></div>
@@ -65,6 +70,11 @@
       <section class="panel" aria-labelledby="cats-title">
         <h2 id="cats-title">花在什麼上</h2>
         <ol id="cats" class="shops cats"></ol>
+      </section>
+
+      <section class="panel" aria-labelledby="recurring-title">
+        <h2 id="recurring-title">固定支出 <small id="recurring-total"></small></h2>
+        <ol id="recurring" class="recurring"></ol>
       </section>
 
       <section class="panel" aria-labelledby="shops-title">
@@ -143,6 +153,7 @@
         <span class="inv-shop"></span>
         <span class="inv-amount"></span>
       </button>
+      <span class="inv-prize" hidden></span>
       <ul class="inv-items" hidden></ul>
     </li>
   </template>

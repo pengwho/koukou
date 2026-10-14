@@ -54,6 +54,9 @@ MERCHANTS = [
 
 # 展示資料的品項是人工標好的分類（來源標成 demo，不假裝是 AI 分的）
 DEMO_LABELS = {
+    '電信月租費 4G 599 型': '其他',
+    '會員月費': '娛樂',
+    '電費': '其他',
     'Uber Eats 外送訂單': '餐飲',
     '中薯': '餐飲',
     '全家 炙燒雞腿便當': '餐飲',
@@ -183,7 +186,65 @@ def generate(months: int = 8, today: date | None = None, seed: int = 20261014):
             }
             out.append((header, items))
         day += timedelta(days=1)
+    out += _bills(start, today)
     return out
+
+
+# 固定支出：每月的電信、健身房，兩個月一次的電費（金額會浮動）。用獨立的亂數，不影響上面的消費
+_BILLS = [
+    # (店, 品名, 每幾個月, 幾號, 金額範圍)
+    ("台灣大哥大股份有限公司", "電信月租費 4G 599 型", 1, 5, (599, 599)),
+    ("健身工廠股份有限公司台北分公司", "會員月費", 1, 1, (1288, 1288)),
+    ("台灣電力股份有限公司台北市區營業處", "電費", 2, 20, (880, 1650)),
+]
+
+
+def _bills(start: date, today: date) -> list[tuple[dict, list[dict]]]:
+    rng = random.Random(7)
+    out = []
+    y, m = start.year, start.month
+    while date(y, m, 1) <= today:
+        for seller, desc, every, day_no, (lo, hi) in _BILLS:
+            d = date(y, m, day_no)
+            if m % every or d > today:
+                continue
+            amount = rng.randint(lo, hi)
+            out.append(({
+                "invNum": f"{rng.choice(_LETTERS)}{rng.choice(_LETTERS)}{rng.randint(0, 99999999):08d}",
+                "invPeriod": _period(d),
+                "invDate": {"year": str(d.year - 1911), "month": str(d.month), "date": str(d.day),
+                            "hours": "9", "minutes": "0", "seconds": "0"},
+                "invoiceTime": "09:00:00", "sellerName": seller,
+                "sellerBan": f"{zlib.crc32(seller.encode()) % 10**8:08d}", "amount": str(amount),
+                "invStatus": "開立已確認", "cardType": "3J0002", "cardNo": "/DEMO123", "demo": True,
+            }, [{"rowNum": "1", "description": desc, "quantity": "1", "unitPrice": str(amount),
+                 "amount": str(amount)}]))
+        m += 1
+        if m == 13:
+            y, m = y + 1, 1
+    return out
+
+
+def demo_draws(store: Store, today: date) -> None:
+    """展示用中獎號碼（不是真的號碼）：最近兩期各讓一兩張發票中小獎，展示對獎的樣子。"""
+    from .lottery import Draw, draw_date
+
+    by_period: dict[str, list[str]] = {}
+    for inv in store.lottery_invoices():
+        by_period.setdefault(inv["period"], []).append(inv["inv_num"])
+    drawn = sorted((p for p in by_period if draw_date(p) <= today), reverse=True)[:2]
+    for i, period in enumerate(drawn):
+        rng = random.Random(f"draw-{period}")
+        nums = sorted(by_period[period])
+        a = nums[len(nums) // 3][-3:]          # 這張中六獎（末 3 碼）
+        first = [f"{rng.randint(0, 99999):05d}{a}"]
+        if i == 0:
+            b = nums[2 * len(nums) // 3][-4:]  # 最近一期再多一張中五獎（末 4 碼）
+            first.append(f"{rng.randint(0, 9999):04d}{b}")
+        while len(first) < 3:
+            first.append(f"{rng.randint(0, 99999999):08d}")
+        store.save_draw(Draw(period, f"{rng.randint(0, 99999999):08d}", f"{rng.randint(0, 99999999):08d}",
+                             first, [], "demo"))
 
 
 def build_demo_db(path: Path, months: int = 8, today: date | None = None) -> Store:
@@ -204,6 +265,7 @@ def build_demo_db(path: Path, months: int = 8, today: date | None = None) -> Sto
     from .ai.categorizer import categorize_store
 
     categorize_store(store, None)
+    demo_draws(store, today or date.today())
     run = store.start_run("demo")
     store.finish_run(run, "ok", store.db.execute("SELECT COUNT(*) FROM invoices").fetchone()[0], "展示資料")
     return store

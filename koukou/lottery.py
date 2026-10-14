@@ -168,7 +168,14 @@ def summarize(invoices: list[dict[str, Any]], draws: dict[str, Draw], today: dat
                 })
         winners.sort(key=lambda w: -(w["prize_amount"] or 0))
         drawn = today >= draw_date(period)
-        status = "drawn" if draw else ("waiting_numbers" if drawn else "pending")
+        if draw:
+            status = "drawn"
+        elif not drawn:
+            status = "pending"
+        elif today > end:
+            status = "expired"  # 官方頁面只留最近兩期；更早的已經過了領獎期限，查不到也領不到
+        else:
+            status = "waiting_numbers"
         out.append({
             "period": period, "label": period_label(period), "count": len(invs), "status": status,
             "draw_date": draw_date(period).isoformat(), "claim_start": start.isoformat(),

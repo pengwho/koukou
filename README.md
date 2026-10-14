@@ -44,6 +44,13 @@ koukou serve
 - 帳本在 `~/.koukou/koukou.sqlite3`；`koukou export` 匯出 CSV；`koukou fetch` 可從命令列同步
 - `koukou demo` 用虛構資料在本機打開
 
+### 自動對獎、固定支出
+
+- **自動對獎。** 開獎後（期別最後一個月的下個月 25 日），摳摳會到[財政部稅務入口網](https://invoice.etax.nat.gov.tw/)抓最新兩期的中獎號碼，比對帳本裡的每一張發票：特別獎、特獎、頭獎到六獎都算，中獎的發票在收據上會蓋「中 $200」，並提醒領獎期限。雲端發票專屬獎每期開出幾百萬組、只公布 PDF，沒辦法在本機比對，所以照財政部在發票資料上的中獎標記顯示。`koukou lottery` 可以在命令列對獎。
+- **固定支出。** 從發票找出「每隔固定時間、同一家、同一樣、金額差不多」的支出：月費、電信、健身房、兩個月一次的電費，還有品名寫著年繳的訂閱。帳單金額會浮動，所以放寬金額條件；大賣場裡剛好每個月買一次的鮮奶不算（訂閱和帳單通常一張發票只有它一項）。會算出每月等值總額和下次扣款日。`koukou recurring` 可以在命令列查看。
+
+在作者真實帳本上：兩期已開獎、98 張發票，這次都沒中；固定支出抓到 Coupang WOW 月費（每月 11 日 $59）和蝦皮 VIP 年繳（$365），沒有誤判。
+
 ### 阿財怎麼分類
 
 **不用任何設定。** 摳回發票後，阿財會用內建的小模型把每個品項分好類：不用網路、不用 API 金鑰、不用另外裝軟體，三百種品名不到一秒。有沒把握的，它會在畫面上請你確認，你答一題，它就重新學一次，相似的品項跟著改。
@@ -120,6 +127,7 @@ flowchart LR
 - [x] 電子發票：表頭、品項、增量同步、CSV 匯出
 - [x] 本機網頁介面與展示模式
 - [x] 線上展示（GitHub Pages）、網頁上直接連結手機條碼、帳密存鑰匙圈
+- [x] 自動對獎、固定支出偵測
 - [x] **阿財**：品項分類（規則＋內建小模型＋選用 LLM、主動學習、評估）
 - [ ] **阿財**：用自然語言問帳本（text-to-SQL，唯讀與白名單防護）
 - [ ] MCP server：讓 Claude 等 AI 直接查你的帳本
@@ -138,7 +146,7 @@ flowchart LR
 
 **KouKou** (摳摳, Taiwanese slang for *money*; 摳 also means *to dig out* and *to be thrifty*) is a local-first personal finance hub for Taiwan.
 
-It pulls your e-invoices — every receipt tied to your mobile barcode carrier, down to line items — by speaking the official mobile app's API directly, stores them in a SQLite ledger on your own machine, and shows them in a small local web app. An assistant, **A-Tsâi (阿財, "little fortune")**, categorizes every line item with zero setup: high-precision rules, then a built-in pure-Python Naive Bayes model (Chinese character n-grams, English word features, store-name features) trained on 862 hand-labeled Taiwanese receipt items. It abstains when unsure, asks you about the uncertain items ranked by spending impact, and retrains instantly on each answer (active learning). An LLM (Claude or any OpenAI-compatible local model) is optional and only reviews low-confidence guesses. Offline accuracy: 89.7% on a held-out 126-item test set; ~81% on the author's real ledger (289 item names, judged by hand), up from ~66% for the first version after error analysis on real data. Bank accounts are next.
+It pulls your e-invoices — every receipt tied to your mobile barcode carrier, down to line items — by speaking the official mobile app's API directly, stores them in a SQLite ledger on your own machine, and shows them in a small local web app. An assistant, **A-Tsâi (阿財, "little fortune")**, categorizes every line item with zero setup: high-precision rules, then a built-in pure-Python Naive Bayes model (Chinese character n-grams, English word features, store-name features) trained on 862 hand-labeled Taiwanese receipt items. It abstains when unsure, asks you about the uncertain items ranked by spending impact, and retrains instantly on each answer (active learning). An LLM (Claude or any OpenAI-compatible local model) is optional and only reviews low-confidence guesses. Offline accuracy: 89.7% on a held-out 126-item test set; ~81% on the author's real ledger (289 item names, judged by hand), up from ~66% for the first version after error analysis on real data. It also checks every invoice against the official lottery numbers automatically after each draw, and detects recurring charges (subscriptions, phone and utility bills) with their next due dates. Bank accounts are next.
 
 **[Try the live demo](https://pengwho.github.io/koukou/)** (generated data, nothing to install), or run it on your own invoices:
 

@@ -70,7 +70,7 @@ def detect(rows: list[dict[str, Any]], today: date) -> list[Recurring]:
         groups.setdefault(key, []).append((date.fromisoformat(r["date"]), float(r["amount"]), desc, single))
 
     found: list[Recurring] = []
-    for (shop, label), events in groups.items():
+    for (shop, _label), events in groups.items():
         # 同一天買兩次算一次
         by_day: dict[date, float] = {}
         for d, amt, _, _ in events:
@@ -79,7 +79,8 @@ def detect(rows: list[dict[str, Any]], today: date) -> list[Recurring]:
         amounts = [by_day[d] for d in days]
         desc = events[0][2]
         text = f"{desc} {shop}"
-        is_sub, is_year, is_bill = bool(_SUBSCRIPTION.search(text)), bool(_YEARLY.search(text)), bool(_BILL.search(text))
+        is_sub, is_year = bool(_SUBSCRIPTION.search(text)), bool(_YEARLY.search(text))
+        is_bill = bool(_BILL.search(text))
         name = desc or f"{shop} 固定金額 ${round(amounts[0])}"
 
         if is_year and len(days) == 1:

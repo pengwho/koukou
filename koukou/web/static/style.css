@@ -277,3 +277,39 @@ button, input { font: inherit; color: inherit; }
 .choice:hover { border-color: var(--ink); }
 .choice.guess { border: 2px solid var(--stamp); color: var(--stamp); }
 .review-note { min-height: 1.5em; margin: 0 0 8px; font-size: 14px; color: var(--ink-soft); }
+
+/* ---- 對獎 ---- */
+.lottery-hit {
+  display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; align-items: center;
+  padding: 14px 16px; border: 2px solid var(--stamp); border-radius: 14px; background: var(--stamp-wash);
+}
+.lottery-stamp {
+  grid-row: span 2; width: 64px; height: 64px; border-radius: 50%; border: 3px solid var(--stamp);
+  color: var(--stamp); display: grid; place-items: center; font-size: 22px; transform: rotate(-10deg);
+}
+.lottery-big { font-family: var(--dots); font-size: 30px; line-height: 1.1; color: var(--stamp); }
+.lottery-sub { font-size: 14px; color: var(--ink-soft); }
+.lottery-list { list-style: none; margin: 10px 0 12px; padding: 0; font-size: 14px; }
+.lottery-list li { display: grid; grid-template-columns: 4.2em 1fr auto; gap: 8px; padding: 3px 0; }
+.lottery-list .num { font-family: var(--dots); color: var(--ink-soft); }
+.lottery-list .won { color: var(--stamp); white-space: nowrap; }
+.lottery-line { margin: 0; font-size: 15px; }
+.lottery-line + .lottery-line { margin-top: 6px; }
+.lottery-line small, .lottery-note { color: var(--ink-soft); font-size: 13px; }
+.lottery-note { margin: 10px 0 0; }
+.inv { position: relative; }
+.inv-prize {
+  position: absolute; right: 64px; top: 9px; border: 1.5px solid var(--stamp); color: var(--stamp);
+  border-radius: 6px; padding: 0 6px; font-size: 12px; line-height: 20px; transform: rotate(-6deg);
+  background: var(--paper); pointer-events: none;
+}
+
+/* ---- 固定支出 ---- */
+#recurring-title small { font-size: 14px; color: var(--ink-soft); margin-left: 6px; }
+.recurring { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.rec { display: grid; grid-template-columns: 1fr auto; gap: 0 12px; }
+.rec-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rec-amt { font-family: var(--dots); text-align: right; }
+.rec-meta { font-size: 13px; color: var(--ink-soft); }
+.rec-next { font-size: 13px; color: var(--ink-soft); text-align: right; white-space: nowrap; }
+.rec.soon .rec-next { color: var(--stamp); }
