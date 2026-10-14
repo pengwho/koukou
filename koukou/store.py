@@ -434,6 +434,18 @@ class Store:
         return out
 
     @_locked
+    def purchase_rows(self) -> list[dict[str, Any]]:
+        """固定支出偵測用：每個正數品項一列；沒有品項的發票用整張金額。"""
+        rows = self.db.execute(
+            "SELECT i.inv_date AS date, i.seller_name AS seller, it.description, "
+            "COALESCE(it.amount, i.amount) AS amount, "
+            "(SELECT COUNT(*) FROM items x WHERE x.inv_num = i.inv_num AND x.amount > 0) AS n_items "
+            "FROM invoices i LEFT JOIN items it ON it.inv_num = i.inv_num AND it.amount > 0 "
+            "WHERE i.inv_date IS NOT NULL"
+        )
+        return [dict(r) for r in rows]
+
+    @_locked
     def item_index(self) -> list[dict[str, Any]]:
         """每個品名一筆：目前的分類、來源、信心、最常出現的店、總金額。線上展示在瀏覽器裡重算用。"""
         from collections import Counter
