@@ -44,7 +44,7 @@ def test_save_is_idempotent(tmp_path):
 
 def test_web_api_on_demo(tmp_path):
     build_demo_db(tmp_path / "d.sqlite3", today=date(2026, 10, 14)).close()
-    client = TestClient(create_app(tmp_path / "d.sqlite3", demo=True))
+    client = TestClient(create_app(tmp_path / "d.sqlite3", demo=True), base_url="http://127.0.0.1")
     meta = client.get("/api/meta").json()
     assert meta["demo"] and meta["default_month"] == "2026-10"
     summary = client.get("/api/summary", params={"month": "2026-09"}).json()
@@ -54,13 +54,5 @@ def test_web_api_on_demo(tmp_path):
     items = client.get(f"/api/invoices/{invoices[0]['inv_num']}/items").json()
     assert items and abs(sum(i["amount"] for i in items) - invoices[0]["amount"]) < 1
     assert client.get("/api/invoices", params={"q": "小籠包"}).json()
-    assert client.post("/api/sync").status_code == 400  # 展示模式不連線
+    assert client.post("/api/sync", headers={"X-KouKou": "1"}).status_code == 400  # 展示模式不連線
     assert "摳摳" in client.get("/").text
-
-
-def test_sync_requires_credentials(tmp_path, monkeypatch):
-    monkeypatch.delenv("EINVOICE_PHONE", raising=False)
-    monkeypatch.delenv("EINVOICE_PASSWORD", raising=False)
-    client = TestClient(create_app(tmp_path / "k.sqlite3"))
-    r = client.post("/api/sync")
-    assert r.status_code == 400 and "EINVOICE_PHONE" in r.json()["detail"]

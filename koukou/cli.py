@@ -17,7 +17,7 @@ import threading
 import webbrowser
 from pathlib import Path
 
-from . import __version__, config
+from . import __version__, config, credentials
 from .store import Store
 
 
@@ -59,11 +59,12 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     logging.basicConfig(filename=log_path, filemode="w", level=logging.DEBUG, encoding="utf-8",
                         format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
-    phone = config.env_value("EINVOICE_PHONE") or input("手機號碼（09 開頭 10 碼）：").strip()
+    saved = credentials.load()  # 網頁上連結過的帳密（鑰匙圈）或 .env
+    phone = saved[0] if saved else input("手機號碼（09 開頭 10 碼）：").strip()
     if not re.fullmatch(r"09\d{8}", phone):
         print(f"手機號碼格式不對：{phone!r}，請填 09 開頭的 10 位數字", file=sys.stderr)
         return 1
-    password = config.env_value("EINVOICE_PASSWORD") or getpass.getpass("手機條碼驗證碼（輸入時不會顯示）：")
+    password = saved[1] if saved else getpass.getpass("手機條碼驗證碼（輸入時不會顯示）：")
 
     store = Store(args.db)
     run_id = store.start_run("einvoice")
@@ -91,6 +92,15 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     extra = f"，途中自動重新登入 {result.relogins} 次" if result.relogins else ""
     print(f"完成，共 {result.invoices} 張{extra}。帳本：{args.db}")
     print("用 koukou serve 打開介面。")
+    return 0
+
+
+def cmd_build_static(args: argparse.Namespace) -> int:
+    from .static_site import build
+
+    out = build(args.out)
+    size = sum(f.stat().st_size for f in out.rglob("*") if f.is_file())
+    print(f"已輸出靜態展示網站到 {out}（{size / 1024:.0f} KB）")
     return 0
 
 
@@ -128,6 +138,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--refresh-details", action="store_true", help="已抓過的品項也重抓")
     p.add_argument("--delay", type=float, default=0.3, help="每次查詢間隔秒數")
     p.set_defaults(func=cmd_fetch)
+
+    p = sub.add_parser("build-static", help="輸出可放上 GitHub Pages 的線上展示")
+    p.add_argument("--out", type=Path, default=Path("site"))
+    p.set_defaults(func=cmd_build_static)
 
     p = sub.add_parser("export", help="匯出 invoices.csv 與 items.csv")
     p.add_argument("--db", type=Path, default=config.default_db())

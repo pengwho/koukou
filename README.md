@@ -11,7 +11,7 @@
 ![Python](https://img.shields.io/badge/python-3.10%2B-25304A)
 ![Local-first](https://img.shields.io/badge/資料-只存在你的電腦-D23A2E)
 
-[English](#english) · [中文](#中文)
+**[👉 線上試玩 Live demo](https://pengwho.github.io/koukou/)**　·　[English](#english) · [中文](#中文)
 
 <img src="docs/screenshot.webp" alt="摳摳的主畫面：左邊是當月的收據明細與「已摳回」印章，右邊是每月花費長條圖和常去的店" width="860">
 
@@ -29,22 +29,20 @@
 
 ### 先看看長什麼樣子
 
-不需要任何帳號，用虛構資料直接打開：
-
-```bash
-pip install git+https://github.com/pengwho/koukou
-koukou demo
-```
+直接打開 **[線上展示](https://pengwho.github.io/koukou/)**，裡面是虛構的發票，什麼都不用裝。
 
 ### 用你自己的發票
 
 ```bash
-mkdir -p ~/.koukou && cp .env.example ~/.koukou/.env   # 填手機號碼與載具驗證碼
-koukou fetch          # 抓最近 6 個月的發票與品項
-koukou serve          # 打開介面；之後按「摳回最新發票」就能更新
+pip install git+https://github.com/pengwho/koukou
+koukou serve
 ```
 
-`EINVOICE_PASSWORD` 是申請手機條碼時設定的**驗證碼**，不是簡訊一次性密碼。資料存在 `~/.koukou/koukou.sqlite3`，`koukou export` 可以匯出 CSV。
+瀏覽器會自動打開。第一次會請你輸入手機條碼的**手機號碼**和**驗證碼**（申請手機條碼時自己設定的那組，不是簡訊驗證碼），之後按「摳回最新發票」就會更新。
+
+- 帳密存在系統鑰匙圈（macOS Keychain），不會寫進檔案；頁尾可以隨時「取消連結」
+- 帳本在 `~/.koukou/koukou.sqlite3`；`koukou export` 匯出 CSV；`koukou fetch` 可從命令列同步
+- `koukou demo` 用虛構資料在本機打開
 
 ### 它怎麼運作
 
@@ -65,12 +63,15 @@ flowchart LR
 - **兩種連線方式。** 財政部主機前面有 Cloudflare，一般的 HTTP client 會因為 TLS 指紋被擋。預設用 `curl_cffi` 模仿 Chrome 指紋（輕量，實測可通過）；被擋時可改用 `--transport browser` 在真的 Chromium 裡發請求，並在網路層拔掉查詢主機不接受的 `Origin` 標頭。
 - **App 的 session 只有約 30 秒。** 抓半年資料一定會過期，所以遇到 `401` 就自動重新登入再重試。
 - **增量同步。** 以發票號碼為主鍵覆寫；已經有品項的發票不會重抓，所以每天跑也很快。
+- **本機服務也要防網頁攻擊。** 任何你打開的網站都能叫瀏覽器對 `127.0.0.1` 發請求。所以伺服器只接受 Host 是本機的請求（擋 DNS rebinding），會改變狀態的請求必須帶自訂標頭（跨站送不出來）。
+- **線上展示不需要伺服器。** `koukou build-static` 把展示帳本匯出成一個 JSON，同一份前端在靜態模式下改從它讀資料、在瀏覽器裡搜尋；GitHub Actions 每次更新自動部署到 Pages。
 - **展示模式走同一條路。** `koukou demo` 產生的假資料是 App API 的原始格式，經過跟真資料一樣的 `Store.save()`，所以它同時是寫入路徑的測試。
 
 ### 路線圖
 
 - [x] 電子發票：表頭、品項、增量同步、CSV 匯出
 - [x] 本機網頁介面與展示模式
+- [x] 線上展示（GitHub Pages）、網頁上直接連結手機條碼、帳密存鑰匙圈
 - [ ] **阿財**：LLM 品項分類（含快取與準確率評估）
 - [ ] **阿財**：用自然語言問帳本（text-to-SQL，唯讀與白名單防護）
 - [ ] MCP server：讓 Claude 等 AI 直接查你的帳本
@@ -91,14 +92,14 @@ flowchart LR
 
 It pulls your e-invoices — every receipt tied to your mobile barcode carrier, down to line items — by speaking the official mobile app's API directly, stores them in a SQLite ledger on your own machine, and shows them in a small local web app. Bank accounts and an AI assistant, **A-Tsâi (阿財, "little fortune")**, are next.
 
+**[Try the live demo](https://pengwho.github.io/koukou/)** (generated data, nothing to install), or run it on your own invoices:
+
 ```bash
 pip install git+https://github.com/pengwho/koukou
-koukou demo            # explore with generated data, no account needed
-koukou fetch           # sync your own e-invoices (credentials in ~/.koukou/.env)
-koukou serve           # open your ledger at http://127.0.0.1:8765
+koukou serve           # opens http://127.0.0.1:8765 and asks for your carrier login on first run
 ```
 
-Engineering notes: the app protocol wraps credentials in an AES-256-GCM envelope and signs queries as HS256 JWTs (covered by fixed test vectors); Cloudflare's TLS fingerprinting is handled with `curl_cffi` Chrome impersonation, with a headless-Chromium fallback that strips the `Origin` header at the network layer; the ~30-second app session is renewed transparently on `401`; syncs are incremental and idempotent.
+Engineering notes: the app protocol wraps credentials in an AES-256-GCM envelope and signs queries as HS256 JWTs (covered by fixed test vectors); Cloudflare's TLS fingerprinting is handled with `curl_cffi` Chrome impersonation, with a headless-Chromium fallback that strips the `Origin` header at the network layer; the ~30-second app session is renewed transparently on `401`; syncs are incremental and idempotent; credentials live in the OS keychain; the local server rejects foreign Host headers and requires a custom header on state-changing requests to block DNS-rebinding and CSRF from other sites.
 
 *Unofficial. Emulating the official app is against its terms of use and may break when the app updates. Use only with your own account.*
 

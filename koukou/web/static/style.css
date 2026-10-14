@@ -195,3 +195,44 @@ button, input { font: inherit; color: inherit; }
   .receipt { padding: 22px 18px 36px; }
   .foot { padding: 0 16px 24px; }
 }
+
+/* ---- 線上展示提示 ---- */
+.live-banner {
+  max-width: 1120px; margin: 4px auto 0; padding: 0 24px;
+  font-size: 15px; color: var(--ink-soft);
+}
+.live-banner a, .foot a, .login a { color: inherit; text-decoration-color: var(--stamp); text-underline-offset: 3px; }
+.foot a { text-decoration: none; }
+.link-btn { border: 0; background: none; padding: 0 0 0 6px; color: var(--ink-soft); text-decoration: underline; cursor: pointer; font-size: inherit; }
+
+/* ---- 連結手機條碼 ---- */
+.login {
+  width: min(440px, calc(100vw - 32px));
+  padding: 28px 28px 24px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 30px 80px -30px rgba(10, 20, 40, .5);
+}
+.login::backdrop { background: rgba(20, 26, 38, .45); }
+.login h2 { margin: 0 0 6px; font-size: 20px; font-weight: 400; }
+.login-lead { margin: 0 0 20px; font-size: 15px; color: var(--ink-soft); }
+.field { display: grid; gap: 4px; margin-bottom: 16px; }
+.field > span { font-size: 15px; }
+.field input {
+  width: 100%; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 10px;
+  background: var(--desk); font-size: 18px;
+}
+.field input:focus-visible { outline-offset: 0; border-color: var(--focus); }
+#login-phone { font-family: var(--dots); letter-spacing: .08em; }
+.field small { font-size: 13px; color: var(--ink-soft); line-height: 1.5; }
+.check { display: flex; gap: 8px; align-items: center; font-size: 15px; margin: 4px 0 14px; cursor: pointer; }
+.check input { width: 18px; height: 18px; accent-color: var(--stamp); }
+.login-error { margin: 0 0 12px; padding: 8px 12px; border-radius: 8px; background: var(--stamp-wash); color: var(--stamp); font-size: 14px; }
+.login-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.ghost-btn { border: 0; background: none; padding: 6px 14px; color: var(--ink-soft); cursor: pointer; border-radius: 999px; }
+.ghost-btn:hover { background: var(--panel); }
+.sync-btn.primary { background: var(--stamp); color: #fff; }
+.sync-btn.primary:hover { background: var(--stamp); filter: brightness(1.08); }
+@media (max-width: 860px) { .live-banner { padding: 0 16px; text-align: center; } }
