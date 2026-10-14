@@ -1,0 +1,13 @@
+# 個人資料與帳密，絕對不要進版控
+.env
+data/
+*.sqlite3
+last_run.log
+
+__pycache__/
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>摳摳 KouKou</title>
+  <link rel="icon" href="/static/stamp.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DotGothic16&family=Huninn&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="bar">
+    <a class="brand" href="/" aria-label="摳摳 KouKou 首頁">
+      <img src="/static/stamp.svg" alt="" width="36" height="36">
+      <span>摳摳</span>
+    </a>
+    <nav class="month-nav" aria-label="切換月份">
+      <button id="prev" class="icon-btn" aria-label="上個月">‹</button>
+      <h1 id="month-label">　</h1>
+      <button id="next" class="icon-btn" aria-label="下個月">›</button>
+    </nav>
+    <div class="actions">
+      <span id="demo-badge" class="demo-badge" hidden>展示資料</span>
+      <button id="sync" class="sync-btn">摳回最新發票</button>
+    </div>
+  </header>
+  <p id="sync-status" class="sync-status" role="status" aria-live="polite"></p>
+
+  <main class="layout">
+    <section class="receipt" aria-labelledby="receipt-title">
+      <div class="receipt-head">
+        <p class="receipt-kicker">電子發票消費明細</p>
+        <h2 id="receipt-title" class="receipt-month"></h2>
+        <div class="total">
+          <span class="total-label">本月合計</span>
+          <span id="total" class="total-amount">$0</span>
+          <div id="stamp" class="stamp" aria-hidden="true">已摳回</div>
+        </div>
+        <p id="total-sub" class="total-sub"></p>
+      </div>
+      <label class="search">
+        <span class="visually-hidden">搜尋</span>
+        <input id="search" type="search" placeholder="搜尋店家、品項或發票號碼" autocomplete="off">
+      </label>
+      <ol id="invoice-list" class="invoice-list"></ol>
+      <p id="empty" class="empty" hidden></p>
+    </section>
+
+    <aside class="side">
+      <section class="panel" aria-labelledby="trend-title">
+        <h2 id="trend-title">每個月花多少</h2>
+        <div id="trend" class="trend" role="group" aria-label="每月消費，點一下切換月份"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="shops-title">
+        <h2 id="shops-title">錢都花去哪</h2>
+        <ol id="shops" class="shops"></ol>
+      </section>
+
+      <section class="panel acai" aria-labelledby="acai-title">
+        <div class="acai-avatar" aria-hidden="true">財</div>
+        <div>
+          <h2 id="acai-title">阿財</h2>
+          <p>我是你的記帳小幫手。下一版開始，我會幫每個品項分類，也能回答「上個月咖啡花了多少」這種問題。</p>
+        </div>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="foot">
+    <span>資料只存在你的電腦</span>
+    <span id="version"></span>
+  </footer>
+
+  <template id="invoice-row">
+    <li class="inv">
+      <button class="inv-btn" aria-expanded="false">
+        <span class="inv-date"></span>
+        <span class="inv-shop"></span>
+        <span class="inv-amount"></span>
+      </button>
+      <ul class="inv-items" hidden></ul>
+    </li>
+  </template>
+
+  <script src="/static/app.js" type="module"></script>
+</body>
+</html>
