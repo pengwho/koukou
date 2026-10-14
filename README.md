@@ -25,7 +25,7 @@
 | --- | --- |
 | 摳摳＝錢 | 把手機條碼的電子發票（之後還有銀行帳戶）收進**你自己電腦上**的一本帳 |
 | 摳＝挖出來 | 模擬官方 App 的協定把資料抓回來，不用一張一張手動匯出 |
-| 摳＝省 | 讓 AI 助理**阿彩**幫你分類、回答問題、找出可以省的地方（開發中） |
+| 摳＝省 | 讓 AI 助理**阿財**幫你分類、回答問題、找出可以省的地方（開發中） |
 
 ### 先看看長什麼樣子
 
@@ -71,8 +71,8 @@ flowchart LR
 
 - [x] 電子發票：表頭、品項、增量同步、CSV 匯出
 - [x] 本機網頁介面與展示模式
-- [ ] **阿彩**：LLM 品項分類（含快取與準確率評估）
-- [ ] **阿彩**：用自然語言問帳本（text-to-SQL，唯讀與白名單防護）
+- [ ] **阿財**：LLM 品項分類（含快取與準確率評估）
+- [ ] **阿財**：用自然語言問帳本（text-to-SQL，唯讀與白名單防護）
 - [ ] MCP server：讓 Claude 等 AI 直接查你的帳本
 - [ ] 第一家銀行（Playwright）
 - [ ] 打包成 macOS App，帳密改存 Keychain
@@ -89,7 +89,7 @@ flowchart LR
 
 **KouKou** (摳摳, Taiwanese slang for *money*; 摳 also means *to dig out* and *to be thrifty*) is a local-first personal finance hub for Taiwan.
 
-It pulls your e-invoices — every receipt tied to your mobile barcode carrier, down to line items — by speaking the official mobile app's API directly, stores them in a SQLite ledger on your own machine, and shows them in a small local web app. Bank accounts and an AI assistant, **A-Tsai (阿彩)**, are next.
+It pulls your e-invoices — every receipt tied to your mobile barcode carrier, down to line items — by speaking the official mobile app's API directly, stores them in a SQLite ledger on your own machine, and shows them in a small local web app. Bank accounts and an AI assistant, **A-Tsâi (阿財, "little fortune")**, are next.
 
 ```bash
 pip install git+https://github.com/pengwho/koukou
