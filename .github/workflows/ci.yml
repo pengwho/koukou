@@ -23,3 +23,20 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: ruff check .
       - run: pytest -q
+
+  # 測試用的是 editable install，看不到「檔案沒被打包」這類問題；
+  # 這裡用一般安裝、在 repo 外面跑一次，跟使用者 pip install 和線上展示部署的情況一樣
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m venv /tmp/venv && /tmp/venv/bin/pip install .
+      - working-directory: /tmp
+        run: |
+          /tmp/venv/bin/koukou --version
+          /tmp/venv/bin/koukou ai eval --offline | head -5
+          /tmp/venv/bin/koukou build-static --out /tmp/site
+          test -s /tmp/site/data/ledger.json && test -s /tmp/site/static/koukou-model.js
