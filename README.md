@@ -25,7 +25,7 @@
 | --- | --- |
 | 摳摳＝錢 | 把手機條碼的電子發票（之後還有銀行帳戶）收進**你自己電腦上**的一本帳 |
 | 摳＝挖出來 | 模擬官方 App 的協定把資料抓回來，不用一張一張手動匯出 |
-| 摳＝省 | 讓 AI 助理**阿財**幫你分類、回答問題、找出可以省的地方（開發中） |
+| 摳＝省 | AI 助理**阿財**幫每個品項分類，看出錢花在什麼上；你改過的分類它會記住 |
 
 ### 先看看長什麼樣子
 
@@ -43,6 +43,42 @@ koukou serve
 - 帳密存在系統鑰匙圈（macOS Keychain），不會寫進檔案；頁尾可以隨時「取消連結」
 - 帳本在 `~/.koukou/koukou.sqlite3`；`koukou export` 匯出 CSV；`koukou fetch` 可從命令列同步
 - `koukou demo` 用虛構資料在本機打開
+
+### 阿財怎麼分類
+
+```bash
+koukou ai setup        # 貼上 Claude API 金鑰（存進鑰匙圈）
+koukou ai categorize   # 或在網頁上按「請阿財分類」；每次摳回發票後也會自動分新品項
+koukou ai eval         # 用人工標註的測試集量準確率
+```
+
+```mermaid
+flowchart LR
+  A[發票品項] --> B{規則<br>只放不會錯的}
+  B -- 命中 --> Z[(分類快取<br>同品名只分一次)]
+  B -- 沒把握 --> C{快取裡有？}
+  C -- 有 --> Z
+  C -- 沒有 --> D[LLM 批次<br>40 個一批<br>JSON schema 輸出]
+  E[你親手改過的分類] -- few-shot 範例 --> D
+  E -- 永遠優先 --> Z
+  D --> Z
+```
+
+- **分層，便宜又快。** 高精準的關鍵字規則先處理（例如「無鉛汽油」→交通、負數→折扣），每個品名只問模型一次，結果快取起來；一份半年的帳本大約 300 種品名，一次就分完，之後每天只有新品名要問。
+- **隱私。** 送給模型的只有「品名」和「店名」，不送金額、日期、發票號碼或載具。想完全不出電腦，可以接本機模型：`KOUKOU_AI_PROVIDER=openai KOUKOU_AI_MODEL=qwen2.5:7b`（Ollama 或任何 OpenAI 相容 API）。
+- **越用越準。** 點品項旁的分類標籤就能改，同名品項一起套用；你改過的分類不會被模型覆蓋，還會被當成範例放進提示詞。
+- **模型不能亂答。** 用 tool use 強制輸出 JSON schema，分類必須在清單內；漏掉的品項會補問一次，信心低的在畫面上用虛線標出來。
+- **數字對得起來。** 折扣、點數折抵和發票差額依比例攤回同一張發票的其他品項，所以各分類加總等於當月發票總額。
+
+**評估。** `koukou/ai/evalset.jsonl` 是 126 個人工標註的台灣發票品項（超商、量販、外送、加油、藥妝……），刻意包含「霜淇淋在 IKEA」「美式雞腿堡不是咖啡」這類容易錯的例子。
+
+| 層 | 覆蓋率 | 準確率 |
+| --- | ---: | ---: |
+| 規則（測試集） | 19.8% | 100% |
+| 規則（作者真實帳本，289 種品名，人工逐筆檢查） | 13.5% | 100% |
+| LLM | 其餘全部 | 執行 `koukou ai eval` 量測 |
+
+規則的兩個誤判（「美式雞腿堡」「多力多滋美式辣起士」被當成咖啡）是拿真實帳本跑出來才發現的；修正後同類例子已經加進測試集當回歸測試。
 
 ### 它怎麼運作
 
@@ -72,7 +108,7 @@ flowchart LR
 - [x] 電子發票：表頭、品項、增量同步、CSV 匯出
 - [x] 本機網頁介面與展示模式
 - [x] 線上展示（GitHub Pages）、網頁上直接連結手機條碼、帳密存鑰匙圈
-- [ ] **阿財**：LLM 品項分類（含快取與準確率評估）
+- [x] **阿財**：LLM 品項分類（規則＋快取＋LLM、使用者修正、評估）
 - [ ] **阿財**：用自然語言問帳本（text-to-SQL，唯讀與白名單防護）
 - [ ] MCP server：讓 Claude 等 AI 直接查你的帳本
 - [ ] 第一家銀行（Playwright）
@@ -90,7 +126,7 @@ flowchart LR
 
 **KouKou** (摳摳, Taiwanese slang for *money*; 摳 also means *to dig out* and *to be thrifty*) is a local-first personal finance hub for Taiwan.
 
-It pulls your e-invoices — every receipt tied to your mobile barcode carrier, down to line items — by speaking the official mobile app's API directly, stores them in a SQLite ledger on your own machine, and shows them in a small local web app. Bank accounts and an AI assistant, **A-Tsâi (阿財, "little fortune")**, are next.
+It pulls your e-invoices — every receipt tied to your mobile barcode carrier, down to line items — by speaking the official mobile app's API directly, stores them in a SQLite ledger on your own machine, and shows them in a small local web app. An AI assistant, **A-Tsâi (阿財, "little fortune")**, categorizes every line item: precise keyword rules first, a per-name cache, then batched LLM calls (Claude, or any OpenAI-compatible local model) with schema-constrained output; your corrections override the model and are fed back as few-shot examples. A hand-labeled 126-item eval set (`koukou ai eval`) measures accuracy per layer. Bank accounts are next.
 
 **[Try the live demo](https://pengwho.github.io/koukou/)** (generated data, nothing to install), or run it on your own invoices:
 
