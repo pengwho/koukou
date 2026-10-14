@@ -33,6 +33,7 @@ include = ["koukou*"]
 
 [tool.setuptools.package-data]
 "koukou.web" = ["static/*"]
+"koukou.ai" = ["trainset.txt", "evalset.jsonl"]
 
 [tool.ruff]
 line-length = 120
