@@ -31,6 +31,10 @@ class BlockedByCloudflare(EInvoiceError):
     pass
 
 
+class LoginRejected(EInvoiceError):
+    """帳號或驗證碼錯誤、帳號被鎖等，伺服器明確拒絕登入。"""
+
+
 class ProtocolOutdated(EInvoiceError):
     """伺服器不認得我們送的格式，通常是官方 App 改版了。"""
 
@@ -120,7 +124,7 @@ class EInvoiceClient:
                 except Exception:
                     pass
             log.debug("login rejected detail: %s", detail)
-            raise EInvoiceError(f"登入被拒（result={body.get('result')}，{detail or '帳號或驗證碼錯誤？'}）")
+            raise LoginRejected(f"登入被拒（result={body.get('result')}，{detail or '帳號或驗證碼錯誤？'}）")
         payload = body.get("payload")
         if not isinstance(payload, str):
             raise ProtocolOutdated("登入成功但沒有 payload")

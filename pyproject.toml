@@ -15,6 +15,7 @@ dependencies = [
   "curl_cffi>=0.7",
   "fastapi>=0.110",
   "uvicorn>=0.29",
+  "keyring>=24",
 ]
 
 [project.optional-dependencies]

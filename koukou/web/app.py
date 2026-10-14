@@ -1,4 +1,10 @@
-"""本機網頁介面：FastAPI 提供 JSON API，靜態頁面負責畫面。只綁 127.0.0.1。"""
+"""本機網頁介面：FastAPI 提供 JSON API，靜態頁面負責畫面。只綁 127.0.0.1。
+
+本機服務也要防網頁攻擊：任何你打開的網站都能叫瀏覽器對 127.0.0.1 發請求。
+- Host 檢查擋 DNS rebinding（惡意網域解析到 127.0.0.1 後讀你的帳本）
+- 會改變狀態的請求必須帶 X-KouKou 自訂標頭；跨站請求帶自訂標頭會觸發 CORS 預檢，
+  而這裡不回 CORS 標頭，所以別的網站送不出來。
+"""
 
 from __future__ import annotations
 
@@ -7,14 +13,24 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
-from .. import __version__, config
+from .. import __version__, config, credentials
 from ..store import Store
 
 STATIC = Path(__file__).parent / "static"
+ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
+FIRST_SYNC_MONTHS = 6  # 第一次連結：抓財政部保留的大約半年
+LATER_SYNC_MONTHS = 2  # 之後：抓最近兩個月就夠，舊的已經在帳本裡
+
+
+class Login(BaseModel):
+    phone: str = Field(pattern=r"^09\d{8}$")
+    password: str = Field(min_length=1, max_length=64)
+    remember: bool = True
 
 
 class SyncJob:
@@ -22,22 +38,20 @@ class SyncJob:
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
-        self.state: dict[str, Any] = {"running": False, "step": "", "error": "", "result": None}
+        self.state: dict[str, Any] = {"running": False, "step": "", "error": "", "error_kind": "", "result": None}
 
     def start(self, db_path: Path, months: int) -> None:
-        phone, password = config.env_value("EINVOICE_PHONE"), config.env_value("EINVOICE_PASSWORD")
-        if not phone or not password:
-            raise HTTPException(
-                400,
-                "還沒設定手機條碼帳密。請在 ~/.koukou/.env 填入 EINVOICE_PHONE 和 EINVOICE_PASSWORD，再重新啟動。",
-            )
+        creds = credentials.load()
+        if creds is None:
+            raise HTTPException(400, "還沒連結手機條碼。")
         with self.lock:
             if self.state["running"]:
                 raise HTTPException(409, "正在同步中，請稍候")
-            self.state = {"running": True, "step": "準備中", "error": "", "result": None}
-        threading.Thread(target=self._run, args=(db_path, phone, password, months), daemon=True).start()
+            self.state = {"running": True, "step": "準備中", "error": "", "error_kind": "", "result": None}
+        threading.Thread(target=self._run, args=(db_path, *creds, months), daemon=True).start()
 
     def _run(self, db_path: Path, phone: str, password: str, months: int) -> None:
+        from ..sources.einvoice.client import LoginRejected
         from ..sources.einvoice.sync import sync_einvoice
 
         store = Store(db_path)
@@ -49,18 +63,30 @@ class SyncJob:
             )
             store.finish_run(run_id, "ok", result.invoices)
             self.state.update(result={"invoices": result.invoices, "new_details": result.details_fetched})
+        except LoginRejected as e:
+            store.finish_run(run_id, "error", 0, str(e))
+            self.state.update(error=str(e), error_kind="login")
         except Exception as e:  # noqa: BLE001 — 任何錯誤都要回報給畫面
             store.finish_run(run_id, "error", 0, str(e))
-            self.state.update(error=str(e))
+            self.state.update(error=str(e), error_kind="other")
         finally:
             store.close()
             self.state.update(running=False, step="")
 
 
-def create_app(db_path: Path, demo: bool = False, sync_months: int = 2) -> FastAPI:
-    app = FastAPI(title="摳摳 KouKou", version=__version__, docs_url=None, redoc_url=None)
+def create_app(db_path: Path, demo: bool = False) -> FastAPI:
+    app = FastAPI(title="摳摳 KouKou", version=__version__, docs_url=None, redoc_url=None, openapi_url=None)
     store = Store(db_path)
     job = SyncJob()
+
+    @app.middleware("http")
+    async def local_only(request: Request, call_next):
+        host = (request.headers.get("host") or "").rsplit(":", 1)[0].strip("[]")
+        if host not in ALLOWED_HOSTS:
+            return JSONResponse({"detail": "只接受本機連線"}, status_code=403)
+        if request.method not in ("GET", "HEAD") and request.headers.get("x-koukou") != "1":
+            return JSONResponse({"detail": "缺少 X-KouKou 標頭"}, status_code=403)
+        return await call_next(request)
 
     def default_month() -> str:
         months = store.months()
@@ -90,6 +116,23 @@ def create_app(db_path: Path, demo: bool = False, sync_months: int = 2) -> FastA
     def items(inv_num: str) -> list[dict[str, Any]]:
         return store.items(inv_num)
 
+    @app.get("/api/credentials")
+    def credentials_status() -> dict[str, Any]:
+        creds = None if demo else credentials.load()
+        return {"configured": creds is not None, "phone": f"{creds[0][:4]}…{creds[0][-3:]}" if creds else None}
+
+    @app.post("/api/credentials")
+    def credentials_save(login: Login) -> dict[str, Any]:
+        if demo:
+            raise HTTPException(400, "展示模式不會連線。")
+        stored = credentials.save(login.phone, login.password, login.remember)
+        return {"configured": True, "remembered": stored}
+
+    @app.delete("/api/credentials")
+    def credentials_clear() -> dict[str, Any]:
+        credentials.clear()
+        return {"configured": credentials.load() is not None}
+
     @app.get("/api/sync")
     def sync_status() -> dict[str, Any]:
         return job.state
@@ -98,7 +141,7 @@ def create_app(db_path: Path, demo: bool = False, sync_months: int = 2) -> FastA
     def sync_start() -> dict[str, Any]:
         if demo:
             raise HTTPException(400, "展示模式不會連線。用 koukou serve（不加 --demo）看你自己的發票。")
-        job.start(db_path, sync_months)
+        job.start(db_path, FIRST_SYNC_MONTHS if not store.months() else LATER_SYNC_MONTHS)
         return job.state
 
     @app.get("/")

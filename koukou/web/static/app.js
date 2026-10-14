@@ -8,29 +8,76 @@ const monthText = (m) => {
   return `${y} 年 ${Number(mm)} 月`;
 };
 
-async function api(path, options) {
-  const res = await fetch(path, options);
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
-  return body;
+// 線上展示（GitHub Pages）沒有伺服器：同一份畫面改從 data/ledger.json 讀資料。
+const STATIC = document.querySelector('meta[name="koukou-mode"]')?.content === "static";
+
+async function api(path, { method = "GET", body } = {}) {
+  if (STATIC) return staticApi(path, method);
+  const res = await fetch(path, {
+    method,
+    headers: { "X-KouKou": "1", ...(body ? { "Content-Type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const detail = Array.isArray(data.detail) ? "格式不對，請再檢查一次" : data.detail;
+    throw new Error(detail || `HTTP ${res.status}`);
+  }
+  return data;
 }
 
-const state = { months: [], month: null, query: "", demo: false };
+let ledger;
+async function staticApi(path, method) {
+  ledger ??= await fetch("data/ledger.json").then((r) => r.json());
+  const url = new URL(path, location.href);
+  const p = url.searchParams;
+  const route = url.pathname.slice(url.pathname.indexOf("api/"));
+  const month = ledger.months[p.get("month") || ledger.meta.default_month];
+  if (method !== "GET") throw new Error("這是線上展示，不會連線。");
+  if (route === "api/meta") return ledger.meta;
+  if (route === "api/monthly") return ledger.monthly;
+  if (route === "api/summary") return month.summary;
+  if (route === "api/merchants") return month.merchants.slice(0, Number(p.get("limit") || 8));
+  if (route === "api/sync") return { running: false };
+  if (route === "api/credentials") return { configured: false };
+  if (route === "api/invoices") {
+    const q = (p.get("q") || "").toLowerCase();
+    if (!q) return month.invoices;
+    return month.invoices.filter((inv) =>
+      [inv.merchant, inv.seller_name, inv.inv_num, ...inv.items.map((it) => it.description)]
+        .some((text) => (text || "").toLowerCase().includes(q)));
+  }
+  const items = route.match(/^api\/invoices\/([^/]+)\/items$/);
+  if (items) {
+    const num = decodeURIComponent(items[1]);
+    for (const m of Object.values(ledger.months)) {
+      const inv = m.invoices.find((i) => i.inv_num === num);
+      if (inv) return inv.items;
+    }
+    return [];
+  }
+  throw new Error(`線上展示不支援 ${route}`);
+}
+
+const state = { months: [], month: null, query: "", demo: false, configured: false };
 
 async function init() {
-  const meta = await api("/api/meta");
+  const meta = await api("api/meta");
   state.months = meta.months;
   state.month = meta.default_month;
   state.demo = meta.demo;
   $("#version").textContent = `v${meta.version}`;
   if (meta.demo) {
     $("#demo-badge").hidden = false;
-    $("#sync").title = "展示模式不會連線";
+    $("#demo-badge").textContent = STATIC ? "線上展示" : "展示資料";
+    $("#live-banner").hidden = !STATIC;
   }
+  await refreshAccount();
   await Promise.all([renderTrend(), render()]);
   $("#stamp").classList.add("press");
-  const sync = await api("/api/sync");
+  const sync = await api("api/sync");
   if (sync.running) pollSync();
+  else if (!meta.demo && !state.configured && meta.months.length === 0) openLogin();  // 第一次打開
 }
 
 async function render() {
@@ -42,9 +89,9 @@ async function render() {
   $("#next").disabled = idx === -1 || idx >= state.months.length - 1;
 
   const [summary, invoices, shops] = await Promise.all([
-    api(`/api/summary?month=${month}`),
-    api(`/api/invoices?month=${month}&q=${encodeURIComponent(query)}`),
-    api(`/api/merchants?month=${month}&limit=6`),
+    api(`api/summary?month=${month}`),
+    api(`api/invoices?month=${month}&q=${encodeURIComponent(query)}`),
+    api(`api/merchants?month=${month}&limit=6`),
   ]);
 
   $("#total").textContent = money(summary.amount);
@@ -89,7 +136,7 @@ async function toggleItems(btn, box, inv) {
   btn.setAttribute("aria-expanded", String(!open));
   box.hidden = open;
   if (open || box.childElementCount) return;
-  const items = await api(`/api/invoices/${encodeURIComponent(inv.inv_num)}/items`);
+  const items = await api(`api/invoices/${encodeURIComponent(inv.inv_num)}/items`);
   for (const it of items) {
     const li = document.createElement("li");
     const name = document.createElement("span");
@@ -131,7 +178,7 @@ function renderShops(shops) {
 }
 
 async function renderTrend() {
-  const data = await api("/api/monthly");
+  const data = await api("api/monthly");
   const box = $("#trend");
   box.replaceChildren();
   const max = Math.max(1, ...data.map((d) => d.amount));
@@ -156,14 +203,59 @@ function go(month) {
   render();
 }
 
+// ---- 連結帳號 ----
+async function refreshAccount() {
+  const acc = await api("api/credentials");
+  state.configured = acc.configured;
+  $("#account").hidden = !acc.configured;
+  $("#account-phone").textContent = acc.phone ?? "";
+}
+
+function openLogin(message = "") {
+  const err = $("#login-error");
+  err.hidden = !message;
+  err.textContent = message;
+  $("#login").showModal();
+  $("#login-phone").focus();
+}
+
+$("#login-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const phone = $("#login-phone").value.trim();
+  if (!/^09\d{8}$/.test(phone)) {
+    openLogin("手機號碼要是 09 開頭的 10 位數字。");
+    return;
+  }
+  try {
+    await api("api/credentials", {
+      method: "POST",
+      body: { phone, password: $("#login-password").value, remember: $("#login-remember").checked },
+    });
+  } catch (err) {
+    openLogin(err.message);
+    return;
+  }
+  $("#login-password").value = "";
+  $("#login").close();
+  await refreshAccount();
+  startSync();
+});
+$("#login-cancel").addEventListener("click", () => $("#login").close());
+$("#logout").addEventListener("click", async () => {
+  await api("api/credentials", { method: "DELETE" });
+  await refreshAccount();
+  $("#sync-status").textContent = "已取消連結，這台電腦不再記得你的帳密。";
+});
+
 // ---- 同步 ----
 async function startSync() {
   const status = $("#sync-status");
   status.classList.remove("error");
   try {
-    await api("/api/sync", { method: "POST" });
+    await api("api/sync", { method: "POST" });
     pollSync();
   } catch (e) {
+    if (e.message.includes("還沒連結")) return openLogin();
     status.classList.add("error");
     status.textContent = e.message;
   }
@@ -174,7 +266,7 @@ async function pollSync() {
   const status = $("#sync-status");
   btn.disabled = true;
   btn.textContent = "摳摳中…";
-  const s = await api("/api/sync");
+  const s = await api("api/sync");
   if (s.running) {
     status.textContent = s.step;
     setTimeout(pollSync, 1000);
@@ -183,13 +275,18 @@ async function pollSync() {
   btn.disabled = false;
   btn.textContent = "摳回最新發票";
   if (s.error) {
+    if (s.error_kind === "login") {
+      status.textContent = "";
+      openLogin("登入沒成功：手機號碼或驗證碼不對。請再確認一次。");
+      return;
+    }
     status.classList.add("error");
     status.textContent = `沒摳成功：${s.error}`;
     return;
   }
   if (s.result) {
     status.textContent = `已摳回 ${s.result.invoices} 張發票`;
-    const meta = await api("/api/meta");
+    const meta = await api("api/meta");
     state.months = meta.months;
     await renderTrend();
     await render();
@@ -204,10 +301,13 @@ $("#prev").addEventListener("click", () => go(state.months[state.months.indexOf(
 $("#next").addEventListener("click", () => go(state.months[state.months.indexOf(state.month) + 1]));
 $("#sync").addEventListener("click", () => {
   if (state.demo) {
-    $("#sync-status").textContent = "這是展示資料，不會連線。執行 koukou serve 就能看你自己的發票。";
+    $("#sync-status").textContent = STATIC
+      ? "線上展示不會連線。在你的電腦上安裝摳摳，就能摳回自己的發票。"
+      : "這是展示資料，不會連線。執行 koukou serve 就能看你自己的發票。";
     return;
   }
-  startSync();
+  if (!state.configured) openLogin();
+  else startSync();
 });
 let searchTimer;
 $("#search").addEventListener("input", (e) => {

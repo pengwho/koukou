@@ -4,16 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>摳摳 KouKou</title>
-  <link rel="icon" href="/static/stamp.svg" type="image/svg+xml">
+  <link rel="icon" href="static/stamp.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DotGothic16&family=Huninn&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="static/style.css">
 </head>
 <body>
   <header class="bar">
-    <a class="brand" href="/" aria-label="摳摳 KouKou 首頁">
-      <img src="/static/stamp.svg" alt="" width="36" height="36">
+    <a class="brand" href="./" aria-label="摳摳 KouKou 首頁">
+      <img src="static/stamp.svg" alt="" width="36" height="36">
       <span>摳摳</span>
     </a>
     <nav class="month-nav" aria-label="切換月份">
@@ -26,6 +26,10 @@
       <button id="sync" class="sync-btn">摳回最新發票</button>
     </div>
   </header>
+  <p id="live-banner" class="live-banner" hidden>
+    這是線上展示，帳本裡的發票全是虛構的。想看自己的發票？
+    <a href="https://github.com/pengwho/koukou#用你自己的發票">在你的電腦上安裝摳摳</a>
+  </p>
   <p id="sync-status" class="sync-status" role="status" aria-live="polite"></p>
 
   <main class="layout">
@@ -70,9 +74,37 @@
   </main>
 
   <footer class="foot">
-    <span>資料只存在你的電腦</span>
-    <span id="version"></span>
+    <span>資料只存在你的電腦<span id="account" hidden>，已連結 <span id="account-phone"></span>
+      <button id="logout" class="link-btn">取消連結</button></span></span>
+    <a id="version" href="https://github.com/pengwho/koukou"></a>
   </footer>
+
+  <dialog id="login" class="login" aria-labelledby="login-title">
+    <form id="login-form" method="dialog">
+      <h2 id="login-title">連結你的手機條碼</h2>
+      <p class="login-lead">摳摳用財政部手機條碼的帳號登入，把發票抓回這台電腦。帳密只存在這台電腦的鑰匙圈，不會上傳到任何地方。</p>
+      <label class="field">
+        <span>手機號碼</span>
+        <input id="login-phone" name="phone" type="tel" inputmode="numeric" autocomplete="username"
+               pattern="09[0-9]{8}" maxlength="10" placeholder="0912345678" required>
+      </label>
+      <label class="field">
+        <span>手機條碼驗證碼</span>
+        <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+        <small>申請手機條碼時自己設定的那組密碼，不是簡訊驗證碼。忘記了可以到
+          <a href="https://www.einvoice.nat.gov.tw/" target="_blank" rel="noopener">財政部電子發票平台</a>重設。</small>
+      </label>
+      <label class="check">
+        <input id="login-remember" type="checkbox" checked>
+        <span>記住在這台電腦，下次不用再輸入</span>
+      </label>
+      <p id="login-error" class="login-error" role="alert" hidden></p>
+      <div class="login-actions">
+        <button type="button" id="login-cancel" class="ghost-btn">取消</button>
+        <button type="submit" class="sync-btn primary">連結並摳回發票</button>
+      </div>
+    </form>
+  </dialog>
 
   <template id="invoice-row">
     <li class="inv">
@@ -85,6 +117,6 @@
     </li>
   </template>
 
-  <script src="/static/app.js" type="module"></script>
+  <script src="static/app.js" type="module"></script>
 </body>
 </html>
