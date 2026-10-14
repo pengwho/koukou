@@ -50,6 +50,16 @@ CREATE TABLE IF NOT EXISTS sync_runs (
     message      TEXT
 );
 CREATE INDEX IF NOT EXISTS invoices_date ON invoices (inv_date);
+-- 財政部公布的中獎號碼（每期一列）
+CREATE TABLE IF NOT EXISTS lottery_draws (
+    period       TEXT PRIMARY KEY,   -- 例如 11508 = 115 年 7–8 月期
+    special      TEXT,
+    grand        TEXT,
+    first        TEXT,               -- JSON 陣列
+    extra_sixth  TEXT,               -- JSON 陣列
+    source       TEXT,               -- official / demo
+    fetched_at   TEXT
+);
 -- 阿財的分類快取：以正規化後的品名為鍵，同名品項共用一個分類
 CREATE TABLE IF NOT EXISTS item_categories (
     key          TEXT PRIMARY KEY,
@@ -381,6 +391,59 @@ class Store:
             d["total"] = round(d["total"] or 0)
             out.append(d)
         return out
+
+    # ---- 對獎 -----------------------------------------------------------------
+
+    @_locked
+    def save_draw(self, draw) -> None:
+        with self.db:
+            self.db.execute(
+                "INSERT OR REPLACE INTO lottery_draws VALUES (?,?,?,?,?,?,?)",
+                (draw.period, draw.special, draw.grand, json.dumps(draw.first), json.dumps(draw.extra_sixth),
+                 draw.source, datetime.now().isoformat(timespec="seconds")),
+            )
+
+    @_locked
+    def draws(self) -> dict[str, Any]:
+        from .lottery import Draw
+
+        return {
+            r["period"]: Draw(r["period"], r["special"], r["grand"], json.loads(r["first"]),
+                              json.loads(r["extra_sixth"] or "[]"), r["source"])
+            for r in self.db.execute("SELECT * FROM lottery_draws")
+        }
+
+    @_locked
+    def lottery_invoices(self) -> list[dict[str, Any]]:
+        from datetime import date as _date
+
+        from .lottery import period_of
+
+        out = []
+        for r in self.db.execute(
+            "SELECT inv_num, inv_date, seller_name, amount, raw_json FROM invoices WHERE inv_date IS NOT NULL"
+        ):
+            d = dict(r)
+            try:
+                period = json.loads(d["raw_json"] or "{}").get("invPeriod")
+            except ValueError:
+                period = None
+            d["period"] = period or period_of(_date.fromisoformat(d["inv_date"]))
+            d["merchant"] = merchant_name(d.pop("seller_name"))
+            out.append(d)
+        return out
+
+    @_locked
+    def purchase_rows(self) -> list[dict[str, Any]]:
+        """固定支出偵測用：每個正數品項一列；沒有品項的發票用整張金額。"""
+        rows = self.db.execute(
+            "SELECT i.inv_date AS date, i.seller_name AS seller, it.description, "
+            "COALESCE(it.amount, i.amount) AS amount, "
+            "(SELECT COUNT(*) FROM items x WHERE x.inv_num = i.inv_num AND x.amount > 0) AS n_items "
+            "FROM invoices i LEFT JOIN items it ON it.inv_num = i.inv_num AND it.amount > 0 "
+            "WHERE i.inv_date IS NOT NULL"
+        )
+        return [dict(r) for r in rows]
 
     @_locked
     def item_index(self) -> list[dict[str, Any]]:

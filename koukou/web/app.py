@@ -74,12 +74,52 @@ class AIJob:
             self.state.update(running=False, step="")
 
 
+class LotteryJob:
+    """背景抓中獎號碼。已開獎、但帳本裡還沒有號碼的期別才需要抓。"""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.state: dict[str, Any] = {"fetching": False, "error": ""}
+
+    @staticmethod
+    def needed(store: Store, today: date) -> bool:
+        from ..lottery import draw_date
+
+        have = store.draws()
+        periods = {i["period"] for i in store.lottery_invoices()}
+        return any(p not in have and draw_date(p) <= today for p in periods)
+
+    def run(self, db_path: Path, background: bool = True) -> None:
+        with self.lock:
+            if self.state["fetching"]:
+                return
+            self.state = {"fetching": True, "error": ""}
+        if background:
+            threading.Thread(target=self._run, args=(db_path,), daemon=True).start()
+        else:
+            self._run(db_path)
+
+    def _run(self, db_path: Path) -> None:
+        from ..lottery import fetch_draws
+
+        store = Store(db_path)
+        try:
+            for draw in fetch_draws():
+                store.save_draw(draw)
+        except Exception as e:  # noqa: BLE001 — 連不上或版面變了都要讓畫面知道
+            self.state.update(error=f"沒拿到中獎號碼：{e}")
+        finally:
+            store.close()
+            self.state.update(fetching=False)
+
+
 class SyncJob:
     """一次只跑一個同步；網頁輪詢 /api/sync 取得進度。"""
 
-    def __init__(self, ai: AIJob | None = None) -> None:
+    def __init__(self, ai: AIJob | None = None, lottery: LotteryJob | None = None) -> None:
         self.lock = threading.Lock()
         self.ai = ai
+        self.lottery = lottery
         self.state: dict[str, Any] = {"running": False, "step": "", "error": "", "error_kind": "", "result": None}
 
     def start(self, db_path: Path, months: int) -> None:
@@ -108,6 +148,9 @@ class SyncJob:
             if self.ai is not None and not self.ai.state["running"]:
                 self.state.update(step="阿財分類新品項")
                 self.ai.run(db_path, background=False)
+            if self.lottery is not None and LotteryJob.needed(store, date.today()):
+                self.state.update(step="對獎")
+                self.lottery.run(db_path, background=False)
         except LoginRejected as e:
             store.finish_run(run_id, "error", 0, str(e))
             self.state.update(error=str(e), error_kind="login")
@@ -123,9 +166,12 @@ def create_app(db_path: Path, demo: bool = False) -> FastAPI:
     app = FastAPI(title="摳摳 KouKou", version=__version__, docs_url=None, redoc_url=None, openapi_url=None)
     store = Store(db_path)
     ai_job = AIJob()
-    job = SyncJob(ai_job)
+    lottery_job = LotteryJob()
+    job = SyncJob(ai_job, lottery_job)
     if not demo and store.pending_items():
         ai_job.run(db_path)  # 舊帳本第一次打開：在背景把還沒分類的品項分好（純本機）
+    if not demo and LotteryJob.needed(store, date.today()):
+        lottery_job.run(db_path)  # 有已開獎的期別還沒對：在背景抓號碼
 
     @app.middleware("http")
     async def local_only(request: Request, call_next):
@@ -201,6 +247,26 @@ def create_app(db_path: Path, demo: bool = False) -> FastAPI:
     @app.get("/api/invoices/{inv_num}/items")
     def items(inv_num: str) -> list[dict[str, Any]]:
         return store.items(inv_num)
+
+    @app.get("/api/lottery")
+    def lottery_status() -> dict[str, Any]:
+        from ..lottery import summarize
+
+        periods = summarize(store.lottery_invoices(), store.draws(), date.today())
+        return {"periods": periods, **lottery_job.state}
+
+    @app.post("/api/lottery/refresh")
+    def lottery_refresh() -> dict[str, Any]:
+        if demo:
+            raise HTTPException(400, "展示模式用的是展示號碼，不會連線。")
+        lottery_job.run(db_path)
+        return lottery_job.state
+
+    @app.get("/api/recurring")
+    def recurring() -> dict[str, Any]:
+        from ..recurring import summary
+
+        return summary(store.purchase_rows(), date.today())
 
     @app.get("/api/credentials")
     def credentials_status() -> dict[str, Any]:

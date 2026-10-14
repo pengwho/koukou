@@ -138,6 +138,8 @@ async function staticApi(path, method, body) {
   if (route === "api/breakdown") return staticBreakdown(month);
   if (route === "api/ai") return { ...ledger.ai, stats: staticStats() };
   if (route === "api/ai/review") return staticQueue(Number(p.get("limit") || 30));
+  if (route === "api/lottery") return ledger.lottery;
+  if (route === "api/recurring") return ledger.recurring;
   if (route === "api/invoices") {
     const q = (p.get("q") || "").toLowerCase();
     const cat = p.get("category");
@@ -160,7 +162,7 @@ async function staticApi(path, method, body) {
   throw new Error(`線上展示不支援 ${route}`);
 }
 
-const state = { months: [], month: null, query: "", category: "", demo: false, configured: false, categories: [] };
+const state = { months: [], month: null, query: "", category: "", demo: false, configured: false, categories: [], prizes: new Map() };
 
 async function init() {
   const meta = await api("api/meta");
@@ -175,7 +177,8 @@ async function init() {
   }
   await refreshAccount();
   state.categories = await api("api/categories");
-  await Promise.all([renderTrend(), render(), refreshAcai()]);
+  await refreshLottery();
+  await Promise.all([renderTrend(), render(), refreshAcai(), renderRecurring()]);
   $("#stamp").classList.add("press");
   const sync = await api("api/sync");
   if (sync.running) pollSync();
@@ -225,6 +228,13 @@ function renderInvoices(invoices) {
     li.querySelector(".inv-shop").textContent = inv.merchant;
     li.querySelector(".inv-shop").title = inv.seller_name ?? "";
     li.querySelector(".inv-amount").textContent = money(inv.amount);
+    const prize = state.prizes.get(inv.inv_num);
+    if (prize) {
+      const chip = li.querySelector(".inv-prize");
+      chip.hidden = false;
+      chip.textContent = prize.prize_amount ? `中 ${money(prize.prize_amount)}` : "中獎";
+      chip.title = prize.prize;
+    }
     const btn = li.querySelector(".inv-btn");
     const box = li.querySelector(".inv-items");
     btn.addEventListener("click", () => toggleItems(btn, box, inv));
@@ -266,6 +276,91 @@ async function toggleItems(btn, box, inv) {
   meta.className = "meta";
   meta.textContent = `${inv.inv_num}　${inv.inv_time ?? ""}　${inv.seller_name ?? ""}`;
   box.append(meta);
+}
+
+// ---- 對獎 ----
+const shortDate = (iso) => {
+  const [y, m, d] = iso.split("-").map(Number);
+  return y === new Date().getFullYear() ? `${m}/${d}` : `${y}/${m}/${d}`;  // 跨年的日期要寫年份
+};
+
+async function refreshLottery() {
+  const data = await api("api/lottery");
+  state.prizes = new Map();
+  for (const p of data.periods) for (const w of p.winners) state.prizes.set(w.inv_num, w);
+  renderLottery(data);
+  if (data.fetching) setTimeout(async () => { await refreshLottery(); render(); }, 1500);
+}
+
+function renderLottery(data) {
+  const panel = $(".lottery");
+  const box = $("#lottery");
+  box.replaceChildren();
+  const periods = data.periods;
+  panel.hidden = !periods.length;
+  if (!periods.length) return;
+  const latest = periods.find((p) => p.status === "drawn");
+  const add = (html) => { box.insertAdjacentHTML("beforeend", html); return box.lastElementChild; };
+  const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  if (latest && latest.winners.length) {
+    const hit = add(`<div class="lottery-hit"><div class="lottery-stamp" aria-hidden="true">中獎</div>
+      <div class="lottery-big">${esc(money(latest.total))}</div>
+      <div class="lottery-sub">${esc(latest.label)}期中了 ${latest.winners.length} 張，${latest.claimable ? `${esc(shortDate(latest.claim_end))} 前領獎` : "領獎期限已過"}</div></div>`);
+    const ul = document.createElement("ul");
+    ul.className = "lottery-list";
+    for (const w of latest.winners) {
+      ul.insertAdjacentHTML("beforeend", `<li><span class="num">${esc(shortDate(w.inv_date))}</span>
+        <span>${esc(w.merchant)}</span><span class="won">${esc(w.prize)}${w.prize_amount ? " " + esc(money(w.prize_amount)) : ""}</span></li>`);
+    }
+    hit.after(ul);
+  } else if (latest) {
+    add(`<p class="lottery-line">${esc(latest.label)}期 ${latest.count} 張都沒中。</p>`);
+  }
+  for (const p of periods) {
+    if (p === latest) continue;
+    if (p.status === "pending") {
+      add(`<p class="lottery-line">${esc(p.label)}期已經有 ${p.count} 張，<strong>${esc(shortDate(p.draw_date))}</strong> 開獎，我會自動幫你對。</p>`);
+    } else if (p.status === "drawn") {
+      add(`<p class="lottery-line"><small>${esc(p.label)}期：${p.winners.length ? `中了 ${esc(money(p.total))}` : `${p.count} 張沒中`}${p.claimable && p.winners.length ? `，${esc(shortDate(p.claim_end))} 前領獎` : ""}</small></p>`);
+    } else if (p.status === "waiting_numbers") {
+      add(`<p class="lottery-line"><small>${esc(p.label)}期已開獎，${data.fetching ? "正在取得中獎號碼…" : "還沒拿到中獎號碼"}</small></p>`);
+    }
+  }
+  if (data.error) add(`<p class="lottery-note">${esc(data.error)}</p>`);
+  const demo = periods.some((p) => p.demo);
+  add(`<p class="lottery-note">${demo ? "展示資料用的是展示號碼，不是真的中獎號碼。" : "號碼來自財政部稅務入口網。"}雲端發票專屬獎以財政部 App 為準。</p>`);
+}
+
+// ---- 固定支出 ----
+async function renderRecurring() {
+  const data = await api("api/recurring");
+  const list = $("#recurring");
+  list.replaceChildren();
+  $("#recurring-total").textContent = data.items.length ? `每月約 ${money(data.monthly_total)}` : "";
+  const soon = new Set(data.upcoming.map((r) => r.name + r.merchant));
+  for (const r of data.items) {
+    const li = document.createElement("li");
+    li.className = "rec" + (soon.has(r.name + r.merchant) ? " soon" : "");
+    const name = document.createElement("span");
+    name.className = "rec-name";
+    name.textContent = r.name;
+    name.title = r.reason;
+    const amt = document.createElement("span");
+    amt.className = "rec-amt";
+    amt.textContent = money(r.typical_amount);
+    const meta = document.createElement("span");
+    meta.className = "rec-meta";
+    meta.textContent = `${r.merchant}，${r.cadence}`;
+    const next = document.createElement("span");
+    next.className = "rec-next";
+    next.textContent = `下次約 ${shortDate(r.next_date)}`;
+    li.append(name, amt, meta, next);
+    list.append(li);
+  }
+  if (!data.items.length) {
+    list.innerHTML = '<li class="empty">還沒找到固定支出。訂閱和帳單要出現幾次之後才認得出來。</li>';
+  }
 }
 
 // ---- 分類 ----
@@ -618,9 +713,11 @@ async function pollSync() {
     status.textContent = `已摳回 ${s.result.invoices} 張發票`;
     const meta = await api("api/meta");
     state.months = meta.months;
+    await refreshLottery();
     await renderTrend();
     await render();
     refreshAcai();
+    renderRecurring();
     $("#stamp").classList.remove("press");
     void $("#stamp").offsetWidth;
     $("#stamp").classList.add("press");

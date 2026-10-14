@@ -133,6 +133,46 @@ def cmd_ai(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_lottery(args: argparse.Namespace) -> int:
+    from datetime import date
+
+    from .lottery import fetch_draws, summarize
+
+    store = Store(args.db)
+    try:
+        for draw in fetch_draws():
+            store.save_draw(draw)
+    except Exception as e:  # noqa: BLE001
+        print(f"沒拿到最新的中獎號碼（{e}），用帳本裡已有的號碼對獎。", file=sys.stderr)
+    for p in summarize(store.lottery_invoices(), store.draws(), date.today()):
+        if p["status"] == "pending":
+            print(f"{p['label']}：{p['count']} 張，{p['draw_date']} 開獎")
+        elif p["status"] == "waiting_numbers":
+            print(f"{p['label']}：{p['count']} 張，已開獎但還沒拿到號碼")
+        elif p["winners"]:
+            print(f"{p['label']}：中了 ${p['total']:,}！領獎期限 {p['claim_end']}")
+            for w in p["winners"]:
+                print(f"  {w['inv_date']} {w['merchant']} {w['inv_num']} → {w['prize']} {w['prize_amount'] or ''}")
+        else:
+            print(f"{p['label']}：{p['count']} 張都沒中")
+    return 0
+
+
+def cmd_recurring(args: argparse.Namespace) -> int:
+    from datetime import date
+
+    from .recurring import summary
+
+    res = summary(Store(args.db).purchase_rows(), date.today())
+    if not res["items"]:
+        print("還沒找到固定支出。訂閱和帳單要出現幾次之後才認得出來。")
+        return 0
+    print(f"固定支出每月約 ${res['monthly_total']:,}")
+    for r in res["items"]:
+        print(f"  {r['name']}（{r['merchant']}）{r['cadence']} ${r['typical_amount']:,}，下次約 {r['next_date']}")
+    return 0
+
+
 def cmd_build_static(args: argparse.Namespace) -> int:
     from .static_site import build
 
@@ -186,6 +226,14 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--offline", "--rules-only", action="store_true", help="不呼叫 LLM，只量規則＋內建小模型")
     a.add_argument("--report", type=Path, help="把結果存成 JSON")
     p.set_defaults(func=cmd_ai)
+
+    p = sub.add_parser("lottery", help="自動對獎（會抓財政部最新中獎號碼）")
+    p.add_argument("--db", type=Path, default=config.default_db())
+    p.set_defaults(func=cmd_lottery)
+
+    p = sub.add_parser("recurring", help="列出偵測到的固定支出")
+    p.add_argument("--db", type=Path, default=config.default_db())
+    p.set_defaults(func=cmd_recurring)
 
     p = sub.add_parser("build-static", help="輸出可放上 GitHub Pages 的線上展示")
     p.add_argument("--out", type=Path, default=Path("site"))
