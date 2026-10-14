@@ -147,3 +147,18 @@ def calibrated_temperature() -> float:
 def build(extra: Iterable[Example] = ()) -> NaiveBayes:
     """內建訓練資料 + 額外範例（使用者的修正權重高，會蓋過內建資料的習慣）。"""
     return NaiveBayes([*load_trainset(), *extra], calibrated_temperature())
+
+
+def export_for_browser() -> dict:
+    """線上展示用：把設定和訓練資料交給 koukou-model.js，在瀏覽器裡用同一套演算法訓練。"""
+    from .categorizer import ABSTAIN, UNSURE, USER_WEIGHT
+
+    return {
+        "config": {
+            "alpha": ALPHA, "store_weight": STORE_WEIGHT, "word_weight": WORD_WEIGHT,
+            "store_gram_weight": STORE_GRAM_WEIGHT, "temperature": calibrated_temperature(),
+            "abstain": ABSTAIN, "unsure": UNSURE, "user_weight": USER_WEIGHT,
+            "categories": list(CATEGORY_IDS),
+        },
+        "trainset": [[e.text, e.store, e.category] for e in load_trainset()],
+    }

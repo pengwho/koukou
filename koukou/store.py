@@ -383,6 +383,33 @@ class Store:
         return out
 
     @_locked
+    def item_index(self) -> list[dict[str, Any]]:
+        """每個品名一筆：目前的分類、來源、信心、最常出現的店、總金額。線上展示在瀏覽器裡重算用。"""
+        from collections import Counter
+
+        rows = self.db.execute(
+            "SELECT c.key, c.description, c.category, c.source, c.confidence, it.amount, i.seller_name "
+            "FROM item_categories c JOIN items it ON koukou_norm(it.description) = c.key "
+            "JOIN invoices i USING (inv_num)"
+        ).fetchall()
+        index: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            d = index.setdefault(r["key"], {
+                "key": r["key"], "description": r["description"], "category": r["category"],
+                "source": r["source"], "confidence": r["confidence"], "total": 0.0, "n": 0,
+                "max_amount": None, "_shops": Counter(),
+            })
+            amt = r["amount"] or 0
+            d["total"] += max(amt, 0)
+            d["n"] += 1
+            d["max_amount"] = amt if d["max_amount"] is None else max(d["max_amount"], amt)
+            d["_shops"][merchant_name(r["seller_name"])] += 1
+        for d in index.values():
+            d["store"] = d.pop("_shops").most_common(1)[0][0]
+            d["total"] = round(d["total"])
+        return list(index.values())
+
+    @_locked
     def confident_llm_labels(self, min_confidence: float = 0.8) -> list[tuple[str, str]]:
         """LLM 有把握的答案，拿來當內建小模型的額外訓練資料（本機蒸餾）。"""
         rows = self.db.execute(

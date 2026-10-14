@@ -77,6 +77,9 @@ def test_static_site_export(tmp_path):
     assert 'src="static/app.js"' in html  # 相對路徑，放在 /koukou/ 子路徑也能用
     ledger = json.loads((out / "data" / "ledger.json").read_text(encoding="utf-8"))
     assert ledger["meta"]["static"] and ledger["meta"]["default_month"] == "2026-10"
+    assert len(ledger["model"]["trainset"]) > 500 and ledger["model"]["config"]["temperature"] > 0
+    assert any(it["source"] == "local" and it["confidence"] < 0.6 for it in ledger["items"])  # 有東西可以確認
+    assert (out / "static" / "koukou-model.js").exists()
     for month in ledger["monthly"]:
         m = ledger["months"][month["month"]]
         assert m["summary"]["count"] == len(m["invoices"]) == month["count"]

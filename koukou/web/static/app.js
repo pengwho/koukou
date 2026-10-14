@@ -12,7 +12,7 @@ const monthText = (m) => {
 const STATIC = document.querySelector('meta[name="koukou-mode"]')?.content === "static";
 
 async function api(path, { method = "GET", body } = {}) {
-  if (STATIC) return staticApi(path, method);
+  if (STATIC) return staticApi(path, method, body);
   const res = await fetch(path, {
     method,
     headers: { "X-KouKou": "1", ...(body ? { "Content-Type": "application/json" } : {}) },
@@ -26,13 +26,107 @@ async function api(path, { method = "GET", body } = {}) {
   return data;
 }
 
+// ---- 線上展示：阿財的小模型在瀏覽器裡跑（koukou-model.js 跟 Python 版逐筆一致）----
 let ledger;
-async function staticApi(path, method) {
-  ledger ??= await fetch("data/ledger.json").then((r) => r.json());
+const live = { items: new Map(), userExamples: [], model: null };
+
+async function loadLedger() {
+  if (ledger) return;
+  ledger = await fetch("data/ledger.json").then((r) => r.json());
+  for (const it of ledger.items) live.items.set(it.key, it);
+}
+
+async function retrain() {
+  const { NaiveBayes } = await import("./koukou-model.js");
+  const cfg = ledger.model.config;
+  const base = ledger.model.trainset.map(([text, store, category]) => ({ text, store, category, weight: 1 }));
+  const user = live.userExamples.map(([text, category]) => ({ text, store: "", category, weight: cfg.user_weight }));
+  live.model = new NaiveBayes([...base, ...user], cfg);
+}
+
+async function relabelLocalItems() {
+  const { guess } = await import("./koukou-model.js");
+  const cfg = ledger.model.config;
+  for (const it of live.items.values()) {
+    if (it.source !== "local") continue;
+    const g = guess(live.model, { description: it.description, store: it.store, amount: it.max_amount }, cfg);
+    it.category = g.category;
+    it.confidence = g.confidence;
+  }
+  const { normalize } = await import("./koukou-model.js");
+  for (const m of Object.values(ledger.months)) {
+    for (const inv of m.invoices) {
+      for (const item of inv.items) {
+        const idx = live.items.get(normalize(item.description));
+        if (!idx) continue;
+        item.category = idx.category;
+        item.category_source = idx.source;
+        item.confidence = idx.confidence;
+      }
+    }
+  }
+}
+
+function staticQueue(limit = 30) {
+  const unsure = ledger.model.config.unsure;
+  return [...live.items.values()]
+    .filter((it) => ["local", "llm"].includes(it.source) && it.total > 0
+      && (it.confidence < unsure || it.category === "未分類"))
+    .sort((a, b) => b.total - a.total)
+    .slice(0, limit);
+}
+
+function staticStats() {
+  const stats = { rule: 0, local: 0, llm: 0, user: 0, demo: 0, pending: 0 };
+  for (const it of live.items.values()) stats[it.source] = (stats[it.source] ?? 0) + 1;
+  stats.low_confidence = staticQueue(10_000).length;
+  return stats;
+}
+
+/** 跟 Store.breakdown 相同：折扣與差額依比例攤回，各分類加總等於發票總額。 */
+function staticBreakdown(month) {
+  const totals = new Map();
+  const invoices = new Map();
+  for (const inv of month.invoices) {
+    let parts = inv.items
+      .filter((it) => it.amount > 0 && it.category !== "折扣")
+      .map((it) => [it.category ?? "未分類", it.amount]);
+    if (!parts.length) parts = [["未分類", inv.amount]];
+    const base = parts.reduce((a, [, v]) => a + v, 0) || 1;
+    for (const [cat, amt] of parts) {
+      totals.set(cat, (totals.get(cat) ?? 0) + amt * inv.amount / base);
+      if (!invoices.has(cat)) invoices.set(cat, new Set());
+      invoices.get(cat).add(inv.inv_num);
+    }
+  }
+  const grand = [...totals.values()].reduce((a, b) => a + b, 0) || 1;
+  return [...totals].map(([category, amt]) => ({
+    category, amount: Math.round(amt), share: amt / grand, invoices: invoices.get(category).size,
+  })).sort((a, b) => b.amount - a.amount);
+}
+
+async function staticFixCategory({ description, category }) {
+  const { normalize } = await import("./koukou-model.js");
+  const key = normalize(description);
+  const it = live.items.get(key);
+  const before = new Set(staticQueue(10_000).map((q) => q.key));
+  if (it) Object.assign(it, { category, source: "user", confidence: 1 });
+  live.userExamples.unshift([description, category]);  // 跟 Python 一樣，最新的修正排前面
+  await retrain();
+  await relabelLocalItems();
+  const after = new Set(staticQueue(10_000).map((q) => q.key));
+  let alsoResolved = 0;
+  for (const k of before) if (!after.has(k) && k !== key) alsoResolved += 1;
+  return { applied_to: it?.n ?? 0, also_resolved: alsoResolved };
+}
+
+async function staticApi(path, method, body) {
+  await loadLedger();
   const url = new URL(path, location.href);
   const p = url.searchParams;
   const route = url.pathname.slice(url.pathname.indexOf("api/"));
   const month = ledger.months[p.get("month") || ledger.meta.default_month];
+  if (method === "POST" && route === "api/items/category") return staticFixCategory(body);
   if (method !== "GET") throw new Error("這是線上展示，不會連線。");
   if (route === "api/meta") return ledger.meta;
   if (route === "api/monthly") return ledger.monthly;
@@ -41,8 +135,9 @@ async function staticApi(path, method) {
   if (route === "api/sync") return { running: false };
   if (route === "api/credentials") return { configured: false };
   if (route === "api/categories") return ledger.categories;
-  if (route === "api/breakdown") return month.breakdown;
-  if (route === "api/ai") return ledger.ai;
+  if (route === "api/breakdown") return staticBreakdown(month);
+  if (route === "api/ai") return { ...ledger.ai, stats: staticStats() };
+  if (route === "api/ai/review") return staticQueue(Number(p.get("limit") || 30));
   if (route === "api/invoices") {
     const q = (p.get("q") || "").toLowerCase();
     const cat = p.get("category");
@@ -191,10 +286,6 @@ function categoryTag(it) {
   paint();
   tag.addEventListener("click", (e) => {
     e.stopPropagation();
-    if (STATIC) {
-      $("#sync-status").textContent = "線上展示不能改分類。在自己的帳本裡，改一次之後同名和相似的品項都會跟著改。";
-      return;
-    }
     const select = document.createElement("select");
     select.className = "tag-select";
     select.setAttribute("aria-label", `把「${it.description}」改成`);
@@ -205,7 +296,10 @@ function categoryTag(it) {
     }
     tag.replaceWith(select);
     select.focus();
+    let finished = false;
     const done = async (save) => {
+      if (finished) return;  // 換回標籤時會觸發 blur，避免重複處理
+      finished = true;
       if (save && select.value !== it.category) {
         try {
           const r = await api("api/items/category", { method: "POST",
@@ -278,7 +372,8 @@ async function refreshAcai() {
   } else if (!done) {
     text.textContent = "摳回發票之後，我會幫每個品項分類。不用網路，也不用設定任何東西。";
   } else if (unsure) {
-    text.textContent = `${done} 種品項我都分好了，其中 ${unsure} 種沒把握。幫我確認一下，相似的我會一起學起來。`;
+    text.textContent = `${done} 種品項我都分好了，其中 ${unsure} 種沒把握。幫我確認一下，相似的我會一起學起來。`
+      + (STATIC ? "（線上展示也能試，學習只發生在你的瀏覽器裡）" : "");
     review.hidden = false;
     review.textContent = `幫我確認 ${unsure} 個`;
   } else {
@@ -299,14 +394,12 @@ async function refreshAcai() {
 const review = { queue: [], answered: 0, learned: 0 };
 
 async function openReview() {
-  if (STATIC) {
-    $("#sync-status").textContent = "線上展示不能改分類。裝在自己電腦上就能幫阿財確認，答案會馬上教會它。";
-    return;
-  }
   review.queue = await api("api/ai/review?limit=50");
   review.answered = 0;
   review.learned = 0;
-  $("#review-note").textContent = "";
+  $("#review-note").textContent = STATIC
+    ? "線上展示：阿財在你的瀏覽器裡重新學習，重新整理頁面就會還原。"
+    : "";
   if (!review.queue.length) return;
   showReviewItem();
   $("#review").showModal();
