@@ -56,6 +56,7 @@ MERCHANTS = [
 DEMO_LABELS = {
     '電信月租費 4G 599 型': '其他',
     '會員月費': '娛樂',
+    '串流影音 標準方案 月費': '娛樂',
     '電費': '其他',
     'Uber Eats 外送訂單': '餐飲',
     '中薯': '餐飲',
@@ -192,10 +193,11 @@ def generate(months: int = 8, today: date | None = None, seed: int = 20261014):
 
 # 固定支出：每月的電信、健身房，兩個月一次的電費（金額會浮動）。用獨立的亂數，不影響上面的消費
 _BILLS = [
-    # (店, 品名, 每幾個月, 幾號, 金額範圍)
-    ("台灣大哥大股份有限公司", "電信月租費 4G 599 型", 1, 5, (599, 599)),
-    ("健身工廠股份有限公司台北分公司", "會員月費", 1, 1, (1288, 1288)),
-    ("台灣電力股份有限公司台北市區營業處", "電費", 2, 20, (880, 1650)),
+    # (店, 品名, 每幾個月, 幾號, 金額範圍, 幾個月前停掉；0 = 還在扣)
+    ("台灣大哥大股份有限公司", "電信月租費 4G 599 型", 1, 5, (599, 599), 0),
+    ("健身工廠股份有限公司台北分公司", "會員月費", 1, 1, (1288, 1288), 0),
+    ("台灣電力股份有限公司台北市區營業處", "電費", 2, 20, (880, 1650), 0),
+    ("好看影音股份有限公司", "串流影音 標準方案 月費", 1, 12, (290, 290), 1),  # 展示「可能已經停了」
 ]
 
 
@@ -204,9 +206,11 @@ def _bills(start: date, today: date) -> list[tuple[dict, list[dict]]]:
     out = []
     y, m = start.year, start.month
     while date(y, m, 1) <= today:
-        for seller, desc, every, day_no, (lo, hi) in _BILLS:
+        for seller, desc, every, day_no, (lo, hi), stopped in _BILLS:
             d = date(y, m, day_no)
             if m % every or d > today:
+                continue
+            if stopped and (today.year - y) * 12 + today.month - m <= stopped:
                 continue
             amount = rng.randint(lo, hi)
             out.append(({

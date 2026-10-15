@@ -313,3 +313,8 @@ button, input { font: inherit; color: inherit; }
 .rec-meta { font-size: 13px; color: var(--ink-soft); }
 .rec-next { font-size: 13px; color: var(--ink-soft); text-align: right; white-space: nowrap; }
 .rec.soon .rec-next { color: var(--stamp); }
+.rec-alert { display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: start;
+  padding: 10px 12px; border: 1px dashed var(--stamp); border-radius: 10px; background: var(--stamp-wash); }
+.rec-alert p { margin: 0; font-size: 14px; line-height: 1.55; }
+.rec-alert-avatar { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--paper); border: 1.5px solid var(--stamp); color: var(--stamp); font-size: 14px; }

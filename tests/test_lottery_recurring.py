@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from koukou import lottery as L
 from koukou.demo import build_demo_db
-from koukou.recurring import detect
+from koukou.recurring import detect, summary
 from koukou.store import Store
 from koukou.web.app import create_app
 
@@ -103,6 +103,7 @@ def test_api_and_demo(tmp_path):
     assert any(p["winners"] for p in lot["periods"]) and all(p["demo"] for p in lot["periods"] if p["winners"])
     rec = web.get("/api/recurring").json()
     assert {r["name"] for r in rec["items"]} >= {"會員月費", "電信月租費 4G 599 型", "電費"}
+    assert [r["name"] for r in rec["stopped"]] == ["串流影音 標準方案 月費"]  # 展示「可能已經停了」
     assert rec["monthly_total"] > 0
     assert web.post("/api/lottery/refresh", headers={"X-KouKou": "1"}).status_code == 400  # 展示模式不連線
 
@@ -121,3 +122,88 @@ def test_fetch_failure_is_reported_not_fatal(tmp_path, monkeypatch):
     job = app_mod.LotteryJob()
     job.run(tmp_path / "k.sqlite3", background=False)
     assert not job.state["fetching"] and "連不上" in job.state["error"]
+
+
+COUPANG = [(f"2026-{m:02d}-11", "酷澎股份有限公司", "WOW 會員訂閱服務月費", 59, 1) for m in (7, 8, 9)]
+GYM = [(f"2026-{m:02d}-01", "健身工廠", "會員月費", 1288, 1) for m in (7, 8, 9, 10)]
+
+
+def test_stopped_subscription_is_flagged():
+    # 10/12 前後該扣 Coupang，到 10/25 都沒看到（帳本有 10/20 的發票，代表有同步）
+    rows = _rows(*COUPANG, *GYM, ("2026-10-20", "全家", "茶葉蛋", 13, 1))
+    res = summary(rows, date(2026, 10, 25))
+    assert [r["name"] for r in res["stopped"]] == ["WOW 會員訂閱服務月費"]
+    assert "10/12" in res["stopped"][0]["message"] and "退訂" in res["stopped"][0]["message"]
+    assert res["monthly_total"] == 1288  # 停掉的不算進每月總額
+    # 才晚幾天，不要急著叫
+    assert summary(rows, date(2026, 10, 15))["stopped"] == []
+
+
+def test_not_flagged_when_ledger_is_just_stale():
+    # 最後一次同步停在 10/1：10/11 沒看到 Coupang 是因為還沒抓，不是停了
+    rows = _rows(*COUPANG, ("2026-10-01", "全家", "茶葉蛋", 13, 1))
+    res = summary(rows, date(2026, 11, 30))
+    assert res["stopped"] == [] and res["items"][0]["status"] == "active"
+
+
+def test_strict_x509_is_relaxed_but_still_verified(tmp_path):
+    """財政部的憑證鏈缺 Subject Key Identifier；Python 3.13+ 的嚴格模式會擋，我們只放寬這一條。"""
+    import datetime as dt
+    import http.server
+    import ssl
+    import threading
+    import urllib.request
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    now = dt.datetime.now(dt.timezone.utc)
+    ca_key, leaf_key = ec.generate_private_key(ec.SECP256R1()), ec.generate_private_key(ec.SECP256R1())
+    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "No-SKI Test CA")])
+    ca = (x509.CertificateBuilder().subject_name(ca_name).issuer_name(ca_name).public_key(ca_key.public_key())
+          .serial_number(1).not_valid_before(now - dt.timedelta(days=1)).not_valid_after(now + dt.timedelta(days=1))
+          .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+          .sign(ca_key, hashes.SHA256()))  # 故意不加 SubjectKeyIdentifier
+    leaf = (x509.CertificateBuilder().subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")]))
+            .issuer_name(ca_name).public_key(leaf_key.public_key()).serial_number(2)
+            .not_valid_before(now - dt.timedelta(days=1)).not_valid_after(now + dt.timedelta(days=1))
+            .add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost")]), critical=False)
+            .sign(ca_key, hashes.SHA256()))
+    pem = lambda c: c.public_bytes(serialization.Encoding.PEM)  # noqa: E731
+    (tmp_path / "ca.pem").write_bytes(pem(ca))
+    (tmp_path / "leaf.pem").write_bytes(pem(leaf) + leaf_key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"ok")
+
+        def log_message(self, *a):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    sctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    sctx.load_cert_chain(tmp_path / "leaf.pem")
+    server.socket = sctx.wrap_socket(server.socket, server_side=True)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"https://localhost:{server.server_address[1]}/"
+    try:
+        ctx = L._ssl_context()
+        ctx.load_verify_locations(tmp_path / "ca.pem")
+        with urllib.request.urlopen(url, context=ctx, timeout=5) as r:
+            assert r.read() == b"ok"
+        assert ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname  # 其他檢查照舊
+        if hasattr(ssl, "VERIFY_X509_STRICT") and ssl.create_default_context().verify_flags & ssl.VERIFY_X509_STRICT:
+            strict = ssl.create_default_context()
+            strict.load_verify_locations(tmp_path / "ca.pem")
+            with pytest.raises(urllib.error.URLError, match="Key Identifier"):
+                urllib.request.urlopen(url, context=strict, timeout=5)
+        # 沒有信任這張 CA 的話，一樣要擋
+        with pytest.raises(urllib.error.URLError, match="CERTIFICATE_VERIFY_FAILED"):
+            urllib.request.urlopen(url, context=L._ssl_context(), timeout=5)
+    finally:
+        server.shutdown()

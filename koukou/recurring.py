@@ -10,6 +10,10 @@
 6. 品名明寫「月費」「訂閱」「年費」的，次數門檻放寬：月費 2 次即可；年繳 1 次就列出
 
 財政部只保留大約半年的發票，所以只抓得到月繳和兩個月繳的；年繳只能靠品名判斷。
+
+停止偵測：該扣款的日子過了一週（或間隔的四分之一，取較長）還沒看到，就標成「可能已經停了」。
+「現在」用帳本裡最新一張發票的日期，不用今天：很久沒同步的話，沒看到扣款只是因為還沒抓下來。
+停掉超過三個週期的就不再列出。
 """
 
 from __future__ import annotations
@@ -42,6 +46,7 @@ class Recurring:
     last_date: str
     next_date: str
     reason: str  # 為什麼判定是固定支出，顯示在畫面上
+    status: str = "active"  # active：還在扣；stopped：該扣的日子過了還沒看到
 
 
 def _amount_cv(amounts: list[float]) -> float:
@@ -68,6 +73,9 @@ def detect(rows: list[dict[str, Any]], today: date) -> list[Recurring]:
         key = (shop, desc or f"${round(r['amount'])}")
         single = (r.get("n_items") or 1) <= 1
         groups.setdefault(key, []).append((date.fromisoformat(r["date"]), float(r["amount"]), desc, single))
+
+    seen = [date.fromisoformat(r["date"]) for r in rows if r.get("date")]
+    data_until = min(today, max(seen)) if seen else today
 
     found: list[Recurring] = []
     for (shop, _label), events in groups.items():
@@ -105,23 +113,39 @@ def detect(rows: list[dict[str, Any]], today: date) -> list[Recurring]:
         typical = statistics.median(amounts)
         last = days[-1]
         nxt = last + timedelta(days=round(median_gap))
-        if (today - last).days > 2 * median_gap:  # 很久沒出現，可能已經停了
-            continue
+        status = "active"
+        overdue = (data_until - nxt).days
+        if overdue > max(7, 0.25 * median_gap):
+            if (data_until - last).days > 3 * median_gap:  # 停很久了，不用再提
+                continue
+            status = "stopped"
         reasons = [f"{len(days)} 次，間隔約 {round(median_gap)} 天"]
         if is_sub:
             reasons.append("品名有月費／訂閱")
         if is_bill:
             reasons.append("帳單金額會浮動")
         found.append(Recurring(name, shop, cadence[0], round(typical), round(typical * cadence[1]), len(days),
-                               last.isoformat(), nxt.isoformat(), "，".join(reasons)))
-    return sorted(found, key=lambda r: -r.monthly_amount)
+                               last.isoformat(), nxt.isoformat(), "，".join(reasons), status))
+    return sorted(found, key=lambda r: (r.status != "active", -r.monthly_amount))
+
+
+def stopped_message(r: Recurring | dict[str, Any]) -> str:
+    """阿財的提醒文字。"""
+    d = r if isinstance(r, dict) else asdict(r)
+    when = date.fromisoformat(d["next_date"])
+    return (f"{d['name']}（{d['merchant']}）原本{d['cadence']}扣 ${d['typical_amount']:,}，"
+            f"{when.month}/{when.day} 前後沒看到這筆，是不是退訂了？"
+            f"如果是，每月省下 ${d['monthly_amount']:,}；如果不是，可能是換了付款方式。")
 
 
 def summary(rows: list[dict[str, Any]], today: date) -> dict[str, Any]:
     items = detect(rows, today)
+    active = [r for r in items if r.status == "active"]
+    stopped = [r for r in items if r.status == "stopped"]
     return {
         "items": [asdict(r) for r in items],
-        "monthly_total": sum(r.monthly_amount for r in items),
-        "upcoming": [asdict(r) for r in sorted(items, key=lambda r: r.next_date)
+        "monthly_total": sum(r.monthly_amount for r in active),
+        "upcoming": [asdict(r) for r in sorted(active, key=lambda r: r.next_date)
                      if 0 <= (date.fromisoformat(r.next_date) - today).days <= 14],
+        "stopped": [{**asdict(r), "message": stopped_message(r)} for r in stopped],
     }
