@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from datetime import date
 from pathlib import Path
@@ -23,6 +24,7 @@ from ..ai import llm
 from ..ai.categories import CATEGORIES, CATEGORY_IDS, UNCATEGORIZED, normalize
 from ..store import Store
 
+log = logging.getLogger("koukou.web")
 STATIC = Path(__file__).parent / "static"
 ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
 FIRST_SYNC_MONTHS = 6  # 第一次連結：抓財政部保留的大約半年
@@ -152,9 +154,11 @@ class SyncJob:
                 self.state.update(step="對獎")
                 self.lottery.run(db_path, background=False)
         except LoginRejected as e:
+            log.warning("login rejected: %s", e)
             store.finish_run(run_id, "error", 0, str(e))
             self.state.update(error=str(e), error_kind="login")
         except Exception as e:  # noqa: BLE001 — 任何錯誤都要回報給畫面
+            log.exception("sync failed")
             store.finish_run(run_id, "error", 0, str(e))
             self.state.update(error=str(e), error_kind="other")
         finally:
@@ -271,14 +275,15 @@ def create_app(db_path: Path, demo: bool = False) -> FastAPI:
     @app.get("/api/credentials")
     def credentials_status() -> dict[str, Any]:
         creds = None if demo else credentials.load()
-        return {"configured": creds is not None, "phone": f"{creds[0][:4]}…{creds[0][-3:]}" if creds else None}
+        return {"configured": creds is not None, "phone": f"{creds[0][:4]}…{creds[0][-3:]}" if creds else None,
+                "keychain_waiting": not demo and credentials.keychain_waiting()}
 
     @app.post("/api/credentials")
     def credentials_save(login: Login) -> dict[str, Any]:
         if demo:
             raise HTTPException(400, "展示模式不會連線。")
         stored = credentials.save(login.phone, login.password, login.remember)
-        return {"configured": True, "remembered": stored}
+        return {"configured": True, "remembered": stored, "keychain_waiting": credentials.keychain_waiting()}
 
     @app.delete("/api/credentials")
     def credentials_clear() -> dict[str, Any]:

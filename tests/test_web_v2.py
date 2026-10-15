@@ -42,11 +42,11 @@ def test_state_changes_need_custom_header(client):
 
 
 def test_credentials_flow(client):
-    assert client.get("/api/credentials").json() == {"configured": False, "phone": None}
+    assert client.get("/api/credentials").json() == {"configured": False, "phone": None, "keychain_waiting": False}
     assert client.post("/api/credentials", headers=H, json={"phone": "12345", "password": "x"}).status_code == 422
     r = client.post("/api/credentials", headers=H, json={"phone": "0912345678", "password": "pw", "remember": True})
-    assert r.json() == {"configured": True, "remembered": False}  # 沒有鑰匙圈時只記在記憶體
-    assert client.get("/api/credentials").json() == {"configured": True, "phone": "0912…678"}
+    assert r.json() == {"configured": True, "remembered": False, "keychain_waiting": False}  # 沒有鑰匙圈時只記在記憶體
+    assert client.get("/api/credentials").json() == {"configured": True, "phone": "0912…678", "keychain_waiting": False}
     assert client.delete("/api/credentials", headers=H).json() == {"configured": False}
 
 
