@@ -337,9 +337,20 @@ async function renderRecurring() {
   const data = await api("api/recurring");
   const list = $("#recurring");
   list.replaceChildren();
-  $("#recurring-total").textContent = data.items.length ? `每月約 ${money(data.monthly_total)}` : "";
+  const active = data.items.filter((r) => r.status !== "stopped");
+  $("#recurring-total").textContent = active.length ? `每月約 ${money(data.monthly_total)}` : "";
   const soon = new Set(data.upcoming.map((r) => r.name + r.merchant));
+  for (const r of data.stopped ?? []) {
+    const li = document.createElement("li");
+    li.className = "rec-alert";
+    li.innerHTML = '<span class="rec-alert-avatar" aria-hidden="true">財</span>';
+    const p = document.createElement("p");
+    p.textContent = r.message;
+    li.append(p);
+    list.append(li);
+  }
   for (const r of data.items) {
+    if (r.status === "stopped") continue;
     const li = document.createElement("li");
     li.className = "rec" + (soon.has(r.name + r.merchant) ? " soon" : "");
     const name = document.createElement("span");

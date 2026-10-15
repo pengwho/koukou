@@ -18,6 +18,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+import ssl
+import urllib.error
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -122,10 +124,32 @@ def parse_page(html: str) -> Draw:
     return Draw(period, special[0], grand[0], first, numbers.get("增開六獎", []))
 
 
+def _ssl_context() -> ssl.SSLContext:
+    """一樣驗證憑證，只是不開 Python 3.13+ 預設的 X.509 嚴格模式。
+
+    財政部網站的憑證鏈（TWCA）缺 Subject Key Identifier，嚴格模式會拒絕；
+    瀏覽器和 curl 都接受這張憑證，所以只關掉這一條，其他檢查（主機名稱、信任鏈、到期）照舊。
+    """
+    ctx = ssl.create_default_context()
+    ctx.verify_flags &= ~getattr(ssl, "VERIFY_X509_STRICT", 0)
+    return ctx
+
+
 def _http_get(url: str) -> str:
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (koukou; +https://github.com/pengwho/koukou)"})
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        return resp.read().decode("utf-8", "replace")
+    try:
+        with urllib.request.urlopen(req, timeout=20, context=_ssl_context()) as resp:
+            return resp.read().decode("utf-8", "replace")
+    except urllib.error.URLError as e:
+        if not isinstance(e.reason, ssl.SSLError):
+            raise
+        # 有些 Python（例如 Homebrew 版）找不到系統的根憑證；改用 curl_cffi 內建的憑證再試一次
+        from curl_cffi import requests as creq
+
+        log.info("urllib 驗不過憑證（%s），改用 curl_cffi", e.reason)
+        resp = creq.get(url, timeout=20, impersonate="chrome")
+        resp.raise_for_status()
+        return resp.content.decode("utf-8", "replace")
 
 
 def fetch_draws(get: Callable[[str], str] = _http_get) -> list[Draw]:

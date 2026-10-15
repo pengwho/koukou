@@ -169,7 +169,10 @@ def cmd_recurring(args: argparse.Namespace) -> int:
         return 0
     print(f"固定支出每月約 ${res['monthly_total']:,}")
     for r in res["items"]:
-        print(f"  {r['name']}（{r['merchant']}）{r['cadence']} ${r['typical_amount']:,}，下次約 {r['next_date']}")
+        if r["status"] == "active":
+            print(f"  {r['name']}（{r['merchant']}）{r['cadence']} ${r['typical_amount']:,}，下次約 {r['next_date']}")
+    for r in res["stopped"]:
+        print(f"\n阿財：{r['message']}")
     return 0
 
 
