@@ -645,6 +645,41 @@ async function refreshAccount() {
   state.configured = acc.configured;
   $("#account").hidden = !acc.configured;
   $("#account-phone").textContent = acc.phone ?? "";
+  showKeychainHint(acc.keychain_waiting);
+}
+
+const KEYCHAIN_HINT = "Mac 正在問你要不要讓摳摳使用鑰匙圈：找一下被蓋住的「鑰匙圈」視窗，輸入 Mac 登入密碼後按「永遠允許」。";
+let keychainTimer = null;
+function showKeychainHint(waiting) {
+  const status = $("#sync-status");
+  if (waiting) {
+    status.classList.add("error");
+    status.textContent = KEYCHAIN_HINT;
+    clearTimeout(keychainTimer);
+    keychainTimer = setTimeout(refreshAccount, 3000); // 使用者按了允許之後自動接上
+  } else if (status.textContent === KEYCHAIN_HINT) {
+    status.classList.remove("error");
+    status.textContent = "";
+  }
+}
+
+function setPasswordVisible(show) {
+  $("#login-password").type = show ? "text" : "password";
+  const btn = $("#login-pw-toggle");
+  btn.setAttribute("aria-pressed", String(show));
+  btn.setAttribute("aria-label", show ? "隱藏驗證碼" : "顯示驗證碼");
+  btn.textContent = show ? "隱藏" : "顯示";
+}
+$("#login-pw-toggle").addEventListener("click", () => {
+  const input = $("#login-password");
+  setPasswordVisible(input.type === "password");
+  input.focus();
+});
+
+function closeLogin() {
+  $("#login-password").value = "";
+  setPasswordVisible(false); // 下次打開時一定是遮住的
+  $("#login").close();
 }
 
 function openLogin(message = "") {
@@ -662,8 +697,9 @@ $("#login-form").addEventListener("submit", async (e) => {
     openLogin("手機號碼要是 09 開頭的 10 位數字。");
     return;
   }
+  let saved;
   try {
-    await api("api/credentials", {
+    saved = await api("api/credentials", {
       method: "POST",
       body: { phone, password: $("#login-password").value, remember: $("#login-remember").checked },
     });
@@ -671,12 +707,13 @@ $("#login-form").addEventListener("submit", async (e) => {
     openLogin(err.message);
     return;
   }
-  $("#login-password").value = "";
-  $("#login").close();
+  closeLogin();
   await refreshAccount();
+  if (saved.keychain_waiting) showKeychainHint(true); // 這次照樣同步，帳密等你按允許後再存進鑰匙圈
   startSync();
 });
-$("#login-cancel").addEventListener("click", () => $("#login").close());
+$("#login-cancel").addEventListener("click", closeLogin);
+$("#login").addEventListener("close", () => setPasswordVisible(false));
 $("#logout").addEventListener("click", async () => {
   await api("api/credentials", { method: "DELETE" });
   await refreshAccount();

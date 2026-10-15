@@ -227,6 +227,15 @@ button, input { font: inherit; color: inherit; }
 }
 .field input:focus-visible { outline-offset: 0; border-color: var(--focus); }
 #login-phone { font-family: var(--dots); letter-spacing: .08em; }
+.pw-wrap { position: relative; display: block; }
+.pw-wrap input { padding-right: 68px; }
+.pw-toggle {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  border: 0; background: none; padding: 6px 10px; border-radius: 999px;
+  font-size: 14px; color: var(--ink-soft); cursor: pointer;
+}
+.pw-toggle:hover { background: var(--panel); color: var(--ink); }
+.pw-toggle[aria-pressed="true"] { color: var(--stamp); }
 .field small { font-size: 13px; color: var(--ink-soft); line-height: 1.5; }
 .check { display: flex; gap: 8px; align-items: center; font-size: 15px; margin: 4px 0 14px; cursor: pointer; }
 .check input { width: 18px; height: 18px; accent-color: var(--stamp); }

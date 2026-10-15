@@ -114,7 +114,11 @@
       </label>
       <label class="field">
         <span>手機條碼驗證碼</span>
-        <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+        <span class="pw-wrap">
+          <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+          <button type="button" id="login-pw-toggle" class="pw-toggle" aria-pressed="false"
+                  aria-label="顯示驗證碼" aria-controls="login-password">顯示</button>
+        </span>
         <small>申請手機條碼時自己設定的那組密碼，不是簡訊驗證碼。忘記了可以到
           <a href="https://www.einvoice.nat.gov.tw/" target="_blank" rel="noopener">財政部電子發票平台</a>重設。</small>
       </label>

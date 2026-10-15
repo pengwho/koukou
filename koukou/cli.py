@@ -27,11 +27,32 @@ def _serve(db: Path, demo: bool, port: int, open_browser: bool) -> int:
     from .web.app import create_app
 
     url = f"http://127.0.0.1:{port}/"
+    log_path = _serve_diagnostics()
     print(f"摳摳開在 {url}（按 Ctrl+C 結束）")
+    print(f"紀錄檔：{log_path}（不含帳密）")
     if open_browser:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
-    uvicorn.run(create_app(db, demo=demo), host="127.0.0.1", port=port, log_level="warning")
+    # timeout_graceful_shutdown：有請求卡住時，Ctrl+C 最多等 3 秒就結束，不會停不下來
+    uvicorn.run(create_app(db, demo=demo), host="127.0.0.1", port=port, log_level="warning",
+                timeout_graceful_shutdown=3)
     return 0
+
+
+def _serve_diagnostics() -> Path:
+    """把摳摳自己的紀錄寫進 ~/.koukou/serve.log；卡住時 `kill -USR1 <pid>` 會把每個執行緒正在做什麼寫進同一個檔。"""
+    import faulthandler
+    import signal
+
+    log_path = config.home() / "serve.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(threadName)s %(name)s %(message)s"))
+    root = logging.getLogger("koukou")
+    root.setLevel(logging.INFO)
+    root.addHandler(handler)
+    if hasattr(signal, "SIGUSR1"):
+        faulthandler.register(signal.SIGUSR1, file=handler.stream, all_threads=True)
+    return log_path
 
 
 def cmd_demo(args: argparse.Namespace) -> int:
